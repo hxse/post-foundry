@@ -3,11 +3,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "node node_modules/.bin/svelte-kit sync && node node_modules/typescript/bin/tsc --noEmit",
+    "dev": "vite dev",
     "test": "vitest run",
     "test:api-offline": "vitest run tests/api-offline.test.ts",
     "test:accounts-offline": "vitest run tests/accounts-offline.test.ts",
+    "test:storage-offline": "vitest run tests/storage-offline.test.ts",
     "debug:api-online": "bun run src/cli/debug-api-online.ts",
+    "runtime-health": "vite-node src/cli/runtime-health.ts",
     "x-token": "bun run src/cli/x-token.ts",
     "x-token-auth": "bun run src/cli/x-token-auth.ts"
   },

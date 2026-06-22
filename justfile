@@ -1,4 +1,4 @@
-check:
+check: _node-for-vitest
     bun run check
 
 init-secrets:
@@ -16,6 +16,12 @@ test-api-offline: _node-for-vitest
 
 test-accounts-offline: _node-for-vitest
     bun run test:accounts-offline
+
+test-storage-offline: _node-for-vitest
+    bun run test:storage-offline
+
+runtime-health: _node-for-vitest
+    bun run runtime-health
 
 debug-api-online *ARGS:
     bun run src/cli/debug-api-online.ts {{ARGS}}

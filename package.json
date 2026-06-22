@@ -1,0 +1,28 @@
+{
+  "name": "post-foundry",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:api-offline": "vitest run tests/api-offline.test.ts",
+    "test:accounts-offline": "vitest run tests/accounts-offline.test.ts",
+    "debug:api-online": "bun run src/cli/debug-api-online.ts",
+    "x-token": "bun run src/cli/x-token.ts",
+    "x-token-auth": "bun run src/cli/x-token-auth.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.44.2",
+    "zod": "^3.25.67"
+  },
+  "devDependencies": {
+    "@sveltejs/adapter-auto": "^6.0.1",
+    "@sveltejs/kit": "^2.22.2",
+    "@sveltejs/vite-plugin-svelte": "^6.2.1",
+    "@types/node": "^24.0.3",
+    "svelte": "^5.34.8",
+    "typescript": "^5.8.3",
+    "vite": "^6.4.3",
+    "vitest": "^3.2.4"
+  }
+}

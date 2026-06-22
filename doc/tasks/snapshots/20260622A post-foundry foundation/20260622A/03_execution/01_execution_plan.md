@@ -11,6 +11,7 @@
 * API 离线测试和在线 debug 是否放在同一个子任务中。
 * 技术栈是否冻结为 TypeScript、Bun、克制使用的 SvelteKit、SQLite、Drizzle、Zod、Vitest 和 `just`。
 * 是否接受“不做反检测浏览器、不做网页登录自动化、不做无人自动隐藏回复”的项目边界。
+* 是否接受在线、真实外部服务和可能计费的验证只能由用户明确要求后手动运行，不能进入默认测试、CI 或 agent 自主 Close Gate。
 
 ## 阶段 1：`20260622A.001 api connectivity harness`
 
@@ -19,7 +20,7 @@
 核心交付：
 
 * `just test-api-offline`：正式离线 API contract 测试入口。
-* `just debug-api-online`：手动在线 API smoke 入口。
+* `just debug-api-online`：用户明确要求时才可运行的手动在线 API smoke 入口。
 * 公开 X 数据 provider port、TwitterAPI.io 只读 adapter 的请求构造、响应解析、错误语义和 fixture。
 * X 官方 API 发帖 client 的请求构造、dry-run、真实发帖保护开关和错误语义。
 * 缺少本地 secrets 文件、账号缺少 token、未授权、rate limit、schema drift、网络失败的稳定错误报告。
@@ -27,7 +28,8 @@
 阶段停止线：
 
 * 离线测试能证明 API client contract，不访问网络。
-* 在线 debug 能在有密钥时手动验证真实服务，在无密钥时清晰失败。
+* 在线 debug 能在用户明确要求且有密钥时手动验证真实服务，在无密钥时清晰失败。
+* 在线 debug、OAuth/token 命令、真实发帖和第三方读回不得被自动测试、CI、定时回归、agent 自主 Close Gate 或 "run all" 触发。
 * 默认命令不会发真实 X 帖子。
 * 真实发帖必须显式设置硬开关和测试账号。
 
@@ -104,10 +106,10 @@ just test
 just test-api-offline
 ```
 
-在线验证只作为人工辅助：
+在线验证只作为人工辅助，且只能在用户当前明确要求时运行；可能计费的第三方 API 请求、X OAuth token endpoint 调用、真实发帖和第三方读回不得自动运行：
 
 ```text
 just debug-api-online
 ```
 
-如果在线验证因没有密钥、网络受限或用户未授权真实发帖而未运行，`04_review` 和最终报告必须写清原因、影响和残余风险。
+如果在线验证因用户未明确要求、没有密钥、网络受限、可能产生费用或用户未授权真实发帖而未运行，`04_review` 和最终报告必须写清原因、影响和残余风险。

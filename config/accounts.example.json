@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "global": {
+    "default_timezone": "Asia/Shanghai",
+    "default_language": "zh-CN",
+    "safety": {
+      "online_debug_requires_user_request": true,
+      "x_browser_access": "forbidden"
+    }
+  },
+  "accounts": [
+    {
+      "account_uuid": "018f8a6d-7f31-7b0a-a8b2-1c0adca0e001",
+      "account_key": "zh-tech",
+      "display_name": "Chinese Tech",
+      "platform": "x",
+      "language": "zh-CN",
+      "enabled": true,
+      "config_version": 1,
+      "topics": {
+        "include": ["AI", "finance", "open_source", "frontier_tech", "digital_nomad"],
+        "exclude": ["politics", "gender_war", "social_issues"]
+      },
+      "posting": {
+        "cadence_hours": 6,
+        "daily_min": 3,
+        "daily_max": 4,
+        "cooldown_minutes": 90,
+        "require_approval": false,
+        "real_posting_enabled": false
+      },
+      "budget": {
+        "x_data_usd_monthly_cap": 10,
+        "llm_usd_monthly_cap": 20,
+        "public_x_monthly_request_cap": 1000
+      },
+      "data_sources": {
+        "public_x": {
+          "provider": "twitterapi.io",
+          "enabled": true,
+          "search_keywords": ["AI", "open_source", "frontier_tech"],
+          "monthly_request_cap": 1000
+        }
+      },
+      "style": {
+        "voice": "natural, concise, analytical",
+        "rules": ["avoid hype", "prefer concrete claims", "separate facts from opinion"],
+        "banned_phrases": ["smoke test", "PostFoundry"]
+      }
+    },
+    {
+      "account_uuid": "018f8a6d-7f31-7b0a-a8b2-1c0adca0e002",
+      "account_key": "en-tech",
+      "display_name": "English Tech",
+      "platform": "x",
+      "language": "en-US",
+      "enabled": true,
+      "config_version": 1,
+      "topics": {
+        "include": ["ai_infra", "fintech", "open_source", "devtools", "silicon_valley"],
+        "exclude": ["election_process_claims", "culture_war"]
+      },
+      "posting": {
+        "cadence_hours": 6,
+        "daily_min": 3,
+        "daily_max": 4,
+        "cooldown_minutes": 90,
+        "require_approval": false,
+        "real_posting_enabled": false
+      },
+      "budget": {
+        "x_data_usd_monthly_cap": 15,
+        "llm_usd_monthly_cap": 30,
+        "public_x_monthly_request_cap": 1200
+      },
+      "data_sources": {
+        "public_x": {
+          "provider": "twitterapi.io",
+          "enabled": true,
+          "search_keywords": ["ai_infra", "devtools", "open_source"],
+          "monthly_request_cap": 1200
+        }
+      },
+      "style": {
+        "voice": "calm, precise, builder-oriented",
+        "rules": ["avoid culture war", "prefer primary sources", "keep claims auditable"],
+        "banned_phrases": ["smoke test", "PostFoundry"]
+      }
+    }
+  ],
+  "x_identities": [
+    {
+      "account_uuid": "018f8a6d-7f31-7b0a-a8b2-1c0adca0e001",
+      "x_user_id": "example-zh-user-id",
+      "x_handle": "example_zh",
+      "oauth_token_status": "missing"
+    },
+    {
+      "account_uuid": "018f8a6d-7f31-7b0a-a8b2-1c0adca0e002",
+      "x_user_id": "example-en-user-id",
+      "x_handle": "example_en",
+      "oauth_token_status": "missing"
+    }
+  ]
+}

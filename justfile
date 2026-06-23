@@ -11,6 +11,9 @@ _node-for-vitest:
 test: _node-for-vitest
     bun run test
 
+test-account-memory-offline: _node-for-vitest
+    bun run test:account-memory-offline
+
 test-api-offline: _node-for-vitest
     bun run test:api-offline
 

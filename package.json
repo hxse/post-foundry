@@ -6,6 +6,7 @@
     "check": "node node_modules/.bin/svelte-kit sync && node node_modules/typescript/bin/tsc --noEmit",
     "dev": "vite dev",
     "test": "vitest run",
+    "test:account-memory-offline": "vitest run tests/account-memory-offline.test.ts",
     "test:api-offline": "vitest run tests/api-offline.test.ts",
     "test:accounts-offline": "vitest run tests/accounts-offline.test.ts",
     "test:account-prompt-offline": "vitest run tests/account-prompt-offline.test.ts",

@@ -44,6 +44,9 @@ test-storage-offline: _node-for-vitest
 test-telegram-offline: _node-for-vitest
     bun run test:telegram-offline
 
+test-topic-radar-offline: _node-for-vitest
+    bun run test:topic-radar-offline
+
 runtime-health: _node-for-vitest
     bun run runtime-health
 

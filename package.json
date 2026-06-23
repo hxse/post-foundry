@@ -13,6 +13,7 @@
     "test:audit-offline": "vitest run tests/audit-ledger-offline.test.ts",
     "test:manual-notification-offline": "vitest run tests/manual-notification-offline.test.ts",
     "test:policy-offline": "vitest run tests/policy-offline.test.ts",
+    "test:source-ingestion-offline": "vitest run tests/source-ingestion-offline.test.ts",
     "test:storage-offline": "vitest run tests/storage-offline.test.ts",
     "test:telegram-offline": "vitest run tests/telegram-offline.test.ts",
     "debug:api-online": "bun run src/cli/debug-api-online.ts",

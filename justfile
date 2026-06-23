@@ -32,6 +32,9 @@ test-manual-notification-offline: _node-for-vitest
 test-policy-offline: _node-for-vitest
     bun run test:policy-offline
 
+test-source-ingestion-offline: _node-for-vitest
+    bun run test:source-ingestion-offline
+
 test-storage-offline: _node-for-vitest
     bun run test:storage-offline
 

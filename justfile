@@ -20,6 +20,9 @@ test-accounts-offline: _node-for-vitest
 test-account-prompt-offline: _node-for-vitest
     bun run test:account-prompt-offline
 
+test-ai-posting-pipeline-offline: _node-for-vitest
+    bun run test:ai-posting-pipeline-offline
+
 test-audit-offline: _node-for-vitest
     bun run test:audit-offline
 

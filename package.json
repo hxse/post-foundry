@@ -9,6 +9,7 @@
     "test:api-offline": "vitest run tests/api-offline.test.ts",
     "test:accounts-offline": "vitest run tests/accounts-offline.test.ts",
     "test:account-prompt-offline": "vitest run tests/account-prompt-offline.test.ts",
+    "test:ai-posting-pipeline-offline": "vitest run tests/ai-posting-pipeline-offline.test.ts",
     "test:audit-offline": "vitest run tests/audit-ledger-offline.test.ts",
     "test:manual-notification-offline": "vitest run tests/manual-notification-offline.test.ts",
     "test:policy-offline": "vitest run tests/policy-offline.test.ts",

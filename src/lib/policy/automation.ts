@@ -117,9 +117,14 @@ export function evaluateAutomationPolicy(input: EvaluateAutomationPolicyInput): 
     addReason(reasons, "account_disabled", "block", "account is disabled");
   }
 
-  addCheck(checks, "text_length", candidate.text.length <= maxPostTextLength, "post text must fit X plain-text limit");
+  addCheck(checks, "text_length", candidate.text.length <= maxPostTextLength, "post text must fit automatic X plain-text limit");
   if (candidate.text.length > maxPostTextLength) {
-    addReason(reasons, "text_too_long", "block", `post text exceeds ${maxPostTextLength} characters`);
+    addReason(
+      reasons,
+      "long_post_requires_human_review",
+      "review",
+      `post text exceeds ${maxPostTextLength} characters and must use Telegram human gate`
+    );
   }
 
   const bannedPhrase = findBannedPhrase(candidate.text, input.account.style.banned_phrases);

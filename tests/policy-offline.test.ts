@@ -54,6 +54,29 @@ describe("automation policy engine", () => {
     expect(decision.reasons.map((reason) => reason.code)).toContain("link_requires_human_review");
   });
 
+  it("routes long no-link posts to Telegram human gate", () => {
+    const account = withRealPostingEnabled(accountByKey("zh-tech"));
+    const decision = evaluateAutomationPolicy({
+      account,
+      candidate: {
+        id: "candidate-long-1",
+        text: `AI ${"产品判断需要把资料、上下文、假设和复盘都连起来，".repeat(18)}`,
+        topicTags: ["AI"],
+        evidenceIds: ["evidence-long-1"]
+      },
+      context: baseContext()
+    });
+
+    expect(decision).toMatchObject({
+      outcome: "human_review",
+      route: "telegram_human_gate",
+      requiresHumanReview: true,
+      canAutoPost: false,
+      hasLink: false
+    });
+    expect(decision.reasons.map((reason) => reason.code)).toContain("long_post_requires_human_review");
+  });
+
   it("rejects content outside account boundaries or with debug/test traces", () => {
     const account = withRealPostingEnabled(accountByKey("zh-tech"));
     const excludedTopic = evaluateAutomationPolicy({

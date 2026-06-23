@@ -16,6 +16,13 @@ const xOfficialOAuthAppSchema = z
   })
   .strict();
 
+const telegramNotificationSchema = z
+  .object({
+    bot_token: z.string().min(1).optional(),
+    notification_channel_chat_id: z.string().min(1).optional()
+  })
+  .strict();
+
 const accountSecretsSchema = z
   .object({
     providers: z
@@ -41,7 +48,8 @@ const secretsFileSchema = z
     global_providers: z
       .object({
         twitterapi_io: providerCredentialSchema.optional(),
-        x_official: xOfficialOAuthAppSchema.optional()
+        x_official: xOfficialOAuthAppSchema.optional(),
+        telegram: telegramNotificationSchema.optional()
       })
       .strict()
       .optional(),
@@ -56,6 +64,11 @@ export type AccountCredentials = {
   twitterApiIoApiKey?: string;
   xOfficialAccessToken?: string;
   xOfficialRefreshToken?: string;
+};
+
+export type TelegramNotificationCredentials = {
+  botToken?: string;
+  notificationChannelChatId?: string;
 };
 
 export type CredentialEnv = Partial<Record<string, string | undefined>>;
@@ -144,5 +157,20 @@ export async function resolveAccountCredentials(params: {
     twitterApiIoApiKey,
     xOfficialAccessToken,
     xOfficialRefreshToken
+  };
+}
+
+export async function resolveTelegramNotificationCredentials(params: {
+  secretsPath?: string;
+  env?: CredentialEnv;
+} = {}): Promise<TelegramNotificationCredentials> {
+  const env = params.env ?? process.env;
+  const secretsPath = params.secretsPath ?? env.POST_FOUNDRY_SECRETS_FILE ?? defaultSecretsPath;
+  const secrets = await loadSecretsFile(secretsPath);
+  const telegram = secrets.global_providers?.telegram;
+
+  return {
+    botToken: env.TELEGRAM_BOT_TOKEN ?? telegram?.bot_token,
+    notificationChannelChatId: env.TELEGRAM_NOTIFICATION_CHANNEL_CHAT_ID ?? telegram?.notification_channel_chat_id
   };
 }

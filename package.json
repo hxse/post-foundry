@@ -11,7 +11,9 @@
     "test:audit-offline": "vitest run tests/audit-ledger-offline.test.ts",
     "test:policy-offline": "vitest run tests/policy-offline.test.ts",
     "test:storage-offline": "vitest run tests/storage-offline.test.ts",
+    "test:telegram-offline": "vitest run tests/telegram-offline.test.ts",
     "debug:api-online": "bun run src/cli/debug-api-online.ts",
+    "debug:tg-online": "bun run src/cli/debug-tg-online.ts",
     "runtime-health": "vite-node src/cli/runtime-health.ts",
     "x-token": "bun run src/cli/x-token.ts",
     "x-token-auth": "bun run src/cli/x-token-auth.ts"

@@ -26,11 +26,17 @@ test-policy-offline: _node-for-vitest
 test-storage-offline: _node-for-vitest
     bun run test:storage-offline
 
+test-telegram-offline: _node-for-vitest
+    bun run test:telegram-offline
+
 runtime-health: _node-for-vitest
     bun run runtime-health
 
 debug-api-online *ARGS:
     bun run src/cli/debug-api-online.ts {{ARGS}}
+
+debug-tg-online *ARGS:
+    bun run src/cli/debug-tg-online.ts {{ARGS}}
 
 x-token *ARGS:
     bun run src/cli/x-token.ts {{ARGS}}

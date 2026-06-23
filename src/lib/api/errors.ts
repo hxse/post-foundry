@@ -12,7 +12,7 @@ export type ApiErrorCode =
   | "real_post_not_allowed"
   | "missing_post_text";
 
-export type ApiProvider = "twitterapi.io" | "x_official" | "local";
+export type ApiProvider = "twitterapi.io" | "x_official" | "telegram" | "local";
 
 export class ApiError extends Error {
   readonly code: ApiErrorCode;

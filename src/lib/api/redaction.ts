@@ -1,6 +1,6 @@
 const secretPatterns = [
   /Bearer\s+[A-Za-z0-9._~+/=-]+/g,
-  /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret)["']?\s*[:=]\s*["'][^"']+["']/gi
+  /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|bot[_-]?token)["']?\s*[:=]\s*["'][^"']+["']/gi
 ];
 
 export function tokenFingerprint(token: string | undefined): string {

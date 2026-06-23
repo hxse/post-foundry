@@ -8,6 +8,7 @@
     "test": "vitest run",
     "test:api-offline": "vitest run tests/api-offline.test.ts",
     "test:accounts-offline": "vitest run tests/accounts-offline.test.ts",
+    "test:audit-offline": "vitest run tests/audit-ledger-offline.test.ts",
     "test:storage-offline": "vitest run tests/storage-offline.test.ts",
     "debug:api-online": "bun run src/cli/debug-api-online.ts",
     "runtime-health": "vite-node src/cli/runtime-health.ts",

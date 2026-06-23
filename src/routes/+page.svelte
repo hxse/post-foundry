@@ -47,6 +47,36 @@
         </div>
       </dl>
     </div>
+
+    <div class="panel">
+      <h2>Audit</h2>
+      <dl>
+        <div>
+          <dt>Events</dt>
+          <dd>{data.health.counts.audit_events}</dd>
+        </div>
+        <div>
+          <dt>AI runs</dt>
+          <dd>{data.health.counts.ai_runs}</dd>
+        </div>
+        <div>
+          <dt>Decisions</dt>
+          <dd>{data.health.counts.ai_decisions}</dd>
+        </div>
+        <div>
+          <dt>Actions</dt>
+          <dd>{data.health.counts.ai_actions}</dd>
+        </div>
+        <div>
+          <dt>Evidence</dt>
+          <dd>{data.health.counts.evidence_refs}</dd>
+        </div>
+        <div>
+          <dt>Reviews</dt>
+          <dd>{data.health.counts.human_reviews}</dd>
+        </div>
+      </dl>
+    </div>
   </section>
 
   <section class="panel">
@@ -139,7 +169,7 @@
 
   .grid {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 14px;
     margin-bottom: 14px;
   }
@@ -193,8 +223,13 @@
     color: #5e6b73;
   }
 
+  @media (max-width: 900px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
   @media (max-width: 720px) {
-    .grid,
     dl {
       grid-template-columns: 1fr;
     }

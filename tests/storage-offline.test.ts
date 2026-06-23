@@ -20,13 +20,19 @@ describe("runtime storage baseline", () => {
       const result = applyRuntimeMigrations(db, () => new Date(now));
       const second = applyRuntimeMigrations(db, () => new Date(now));
 
-      expect(result.applied).toEqual(["0001_runtime_storage_baseline"]);
-      expect(second.skipped).toEqual(["0001_runtime_storage_baseline"]);
+      expect(result.applied).toEqual(["0001_runtime_storage_baseline", "0002_audit_event_ledger_baseline"]);
+      expect(second.skipped).toEqual(["0001_runtime_storage_baseline", "0002_audit_event_ledger_baseline"]);
       expect(listRuntimeTables(db)).toEqual([
         "account_key_history",
         "accounts",
+        "ai_actions",
+        "ai_decisions",
+        "ai_runs",
         "api_call_audit",
+        "audit_events",
         "config_snapshots",
+        "evidence_refs",
+        "human_reviews",
         "jobs",
         "schema_migrations",
         "x_identities"
@@ -138,13 +144,22 @@ describe("runtime storage baseline", () => {
       const health = buildRuntimeHealthSnapshot(db, repo);
 
       expect(health.status).toBe("ok");
-      expect(health.database.applied_migrations).toEqual(["0001_runtime_storage_baseline"]);
+      expect(health.database.applied_migrations).toEqual([
+        "0001_runtime_storage_baseline",
+        "0002_audit_event_ledger_baseline"
+      ]);
       expect(health.database.tables).toContain("accounts");
       expect(health.counts).toEqual({
         accounts: 0,
         jobs: 0,
         api_call_audit: 0,
-        config_snapshots: 0
+        config_snapshots: 0,
+        audit_events: 0,
+        ai_runs: 0,
+        ai_decisions: 0,
+        ai_actions: 0,
+        evidence_refs: 0,
+        human_reviews: 0
       });
     } finally {
       db.close();

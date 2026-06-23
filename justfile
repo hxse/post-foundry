@@ -17,6 +17,9 @@ test-api-offline: _node-for-vitest
 test-accounts-offline: _node-for-vitest
     bun run test:accounts-offline
 
+test-audit-offline: _node-for-vitest
+    bun run test:audit-offline
+
 test-storage-offline: _node-for-vitest
     bun run test:storage-offline
 

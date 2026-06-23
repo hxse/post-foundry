@@ -25,6 +25,8 @@ const telegramNotificationSchema = z
 
 const accountSecretsSchema = z
   .object({
+    initial_prompt: z.string().trim().min(1).optional(),
+    initial_prompt_path: z.string().trim().min(1).optional(),
     providers: z
       .object({
         twitterapi_io: providerCredentialSchema.optional()
@@ -40,7 +42,15 @@ const accountSecretsSchema = z
       .strict()
       .optional()
   })
-  .strict();
+  .strict()
+  .superRefine((account, context) => {
+    if (account.initial_prompt && account.initial_prompt_path) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "initial_prompt and initial_prompt_path are mutually exclusive"
+      });
+    }
+  });
 
 const secretsFileSchema = z
   .object({

@@ -29,6 +29,9 @@ test-audit-offline: _node-for-vitest
 test-manual-notification-offline: _node-for-vitest
     bun run test:manual-notification-offline
 
+test-offline-orchestration: _node-for-vitest
+    bun run test:offline-orchestration
+
 test-policy-offline: _node-for-vitest
     bun run test:policy-offline
 

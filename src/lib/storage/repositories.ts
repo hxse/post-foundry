@@ -240,6 +240,18 @@ export type RecordHumanReviewInput = {
 export class RuntimeRepository {
   constructor(private readonly db: RuntimeDatabase) {}
 
+  transaction<T>(callback: () => T): T {
+    this.db.exec("BEGIN;");
+    try {
+      const result = callback();
+      this.db.exec("COMMIT;");
+      return result;
+    } catch (error) {
+      this.db.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
   upsertAccount(account: AccountConfig, now: string): void {
     this.db
       .prepare(

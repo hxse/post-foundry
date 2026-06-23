@@ -20,6 +20,9 @@ test-accounts-offline: _node-for-vitest
 test-audit-offline: _node-for-vitest
     bun run test:audit-offline
 
+test-manual-notification-offline: _node-for-vitest
+    bun run test:manual-notification-offline
+
 test-policy-offline: _node-for-vitest
     bun run test:policy-offline
 

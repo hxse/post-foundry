@@ -14,6 +14,9 @@ test: _node-for-vitest
 test-account-memory-offline: _node-for-vitest
     bun run test:account-memory-offline
 
+test-llm-draft-adapter-offline: _node-for-vitest
+    bun run test:llm-draft-adapter-offline
+
 test-api-offline: _node-for-vitest
     bun run test:api-offline
 

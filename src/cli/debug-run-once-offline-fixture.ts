@@ -22,7 +22,7 @@ async function main(): Promise<void> {
     const result = await executor({
       accountKey: args.account,
       traceId,
-      entrypoint: "run-once-online",
+      entrypoint: "prod-online-run-once",
       startedAt
     });
 

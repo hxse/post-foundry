@@ -30,12 +30,12 @@ describe("online operation runner baseline", () => {
           expect(JSON.parse(await readFile(lockPath, "utf8"))).toMatchObject({
             accountKey: "zh-tech",
             traceId: "trace-online-once-1",
-            entrypoint: "run-once-online"
+            entrypoint: "prod-online-run-once"
           });
           expect(context).toMatchObject({
             accountKey: "zh-tech",
             traceId: "trace-online-once-1",
-            entrypoint: "run-once-online"
+            entrypoint: "prod-online-run-once"
           });
           return {
             outcome: "completed",
@@ -199,7 +199,7 @@ describe("online operation runner baseline", () => {
       });
 
       expect(result.iterations).toBe(2);
-      expect(result.results.every((run) => run.entrypoint === "run-loop-online")).toBe(true);
+      expect(result.results.every((run) => run.entrypoint === "prod-online-run-loop")).toBe(true);
       expect(traceIds).toHaveLength(2);
       expect(sleeps).toEqual([305_000]);
     } finally {
@@ -270,7 +270,7 @@ function staleLock(): OnlineOperationLockSnapshot {
     accountKey: "zh-tech",
     pid: 999_999,
     hostname: "test-host",
-    entrypoint: "run-loop-online",
+    entrypoint: "prod-online-run-loop",
     traceId: "trace-stale-lock",
     startedAt: "2026-06-23T00:00:00.000Z",
     expiresAt: "2026-06-23T01:00:00.000Z"

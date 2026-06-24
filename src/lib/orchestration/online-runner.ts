@@ -11,7 +11,7 @@ export const defaultOnlineLoopJitterSeconds = 0;
 export const defaultOnlineOperationLockTtlSeconds = 2 * 60 * 60;
 export const defaultOnlineOperationLockPollIntervalMs = 1_000;
 
-export type OnlineOperationEntrypoint = "run-once-online" | "run-loop-online";
+export type OnlineOperationEntrypoint = "prod-online-run-once" | "prod-online-run-loop";
 export type OnlineOperationOutcome = "completed" | "skipped" | "failed";
 
 export type OnlineOperationContext = {
@@ -116,7 +116,7 @@ const isoDateTimeSchema = z.string().datetime();
 const positiveIntegerSchema = z.number().int().positive();
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
 const outcomeSchema = z.enum(["completed", "skipped", "failed"]);
-const entrypointSchema = z.enum(["run-once-online", "run-loop-online"]);
+const entrypointSchema = z.enum(["prod-online-run-once", "prod-online-run-loop"]);
 const lockSnapshotSchema = z
   .object({
     kind: z.literal("post_foundry_online_operation_lock_v1"),
@@ -140,7 +140,7 @@ const operationResultSchema = z
 
 export async function runOnlineOperationOnce(input: RunOnlineOperationOnceInput): Promise<OnlineOperationRunResult> {
   const accountKey = parseAccountKey(input.accountKey);
-  const entrypoint = input.entrypoint ?? "run-once-online";
+  const entrypoint = input.entrypoint ?? "prod-online-run-once";
   const now = input.now ?? (() => new Date());
   const traceId = input.traceId ?? createTraceId(accountKey, now());
   const lock = await acquireAccountOperationLock({
@@ -207,7 +207,7 @@ export async function runOnlineOperationLoop(input: RunOnlineOperationLoopInput)
       await runOnlineOperationOnce({
         ...input,
         accountKey,
-        entrypoint: "run-loop-online",
+        entrypoint: "prod-online-run-loop",
         traceId: createTraceId(accountKey, now()),
         now,
         sleep

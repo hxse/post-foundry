@@ -267,7 +267,7 @@ describe("run-once operation executor baseline", () => {
         executor({
           accountKey: "en-tech",
           traceId: "trace-executor-mismatch-1",
-          entrypoint: "run-once-online",
+          entrypoint: "prod-online-run-once",
           startedAt: now
         })
       ).rejects.toMatchObject({
@@ -306,7 +306,7 @@ describe("run-once operation executor baseline", () => {
       });
 
       expect(result.iterations).toBe(2);
-      expect(result.results.every((run) => run.entrypoint === "run-loop-online")).toBe(true);
+      expect(result.results.every((run) => run.entrypoint === "prod-online-run-loop")).toBe(true);
       expect(result.results.every((run) => run.finalAction === "auto_post_planned")).toBe(true);
       expect(sleeps).toEqual([300_000]);
 

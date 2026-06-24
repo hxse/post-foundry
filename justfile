@@ -50,6 +50,9 @@ test-offline-orchestration: _node-for-vitest
 test-offline-policy: _node-for-vitest
     bun run test:policy-offline
 
+test-offline-production-run-once: _node-for-vitest
+    bun run test:production-run-once-offline
+
 test-offline-source-adapters: _node-for-vitest
     bun run test:source-adapters-offline
 
@@ -115,10 +118,10 @@ debug-online-x-token-auth *ARGS:
 # Production online runtime: real account operation entrypoints
 # ----------------------------------------------------------------------
 
-# PROD ONLINE: scheduler/once entrypoint. Current executor is intentionally not wired yet.
+# PROD ONLINE: run one source collection cycle with real external APIs.
 prod-online-run-once *ARGS:
     bun run src/cli/run-once-online.ts {{ARGS}}
 
-# PROD ONLINE: loop entrypoint. Current executor is intentionally not wired yet.
+# PROD ONLINE: loop source collection cycles with real external APIs.
 prod-online-run-loop *ARGS:
     bun run src/cli/run-loop-online.ts {{ARGS}}

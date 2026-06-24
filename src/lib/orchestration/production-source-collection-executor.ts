@@ -1,12 +1,16 @@
 import {
   createAccountConfigSnapshot,
   resolveAccountRef,
+  type AccountConfigSnapshot,
   type AccountRegistry
 } from "../accounts/registry";
+import type { AccountInitialPrompt } from "../accounts/account-prompt";
 import { ApiError } from "../api/errors";
 import { collectAccountPublicXSourceBatch, type PublicXSourceCollectionResult } from "../context/source-collection";
+import { buildSourceContext, recordSourceContextIngestion, type RecentPostInput, type SourceContextPackage } from "../context/source-ingestion";
 import type { PublicXDataProvider } from "../providers/public-x";
 import type { RuntimeRepository } from "../storage/repositories";
+import { buildTopicRadar, recordTopicRadarSelection, type TopicRadarPackage } from "../topics/topic-radar";
 import type { OnlineOperationContext, OnlineOperationExecutor, OnlineOperationExecutorResult } from "./online-runner";
 
 export type ProductionSourceCollectionExecutorInput = {
@@ -14,9 +18,15 @@ export type ProductionSourceCollectionExecutorInput = {
   registry: AccountRegistry;
   accountKey: string;
   provider: PublicXDataProvider;
+  loadPrompt: () => Promise<AccountInitialPrompt> | AccountInitialPrompt;
+  recentPosts?: RecentPostInput[];
   configSnapshotId?: string;
   maxQueries?: number;
   perQueryLimit?: number;
+  candidatesLimit?: number;
+  duplicateThreshold?: number;
+  materialsLimit?: number;
+  recentPostsLimit?: number;
 };
 
 export function createProductionSourceCollectionExecutor(input: ProductionSourceCollectionExecutorInput): OnlineOperationExecutor {
@@ -36,30 +46,77 @@ async function runProductionSourceCollection(
 
   const { account } = resolveAccountRef(input.registry, { accountKey: input.accountKey });
   seedRegistry(input.repo, input.registry, context.startedAt);
-  const configSnapshotId =
-    input.configSnapshotId ??
-    input.repo.saveConfigSnapshot(
-      createAccountConfigSnapshot({
-        registry: input.registry,
-        ref: { accountKey: input.accountKey },
-        capturedAt: context.startedAt
-      })
-    );
+  const configSnapshot = createAccountConfigSnapshot({
+    registry: input.registry,
+    ref: { accountKey: input.accountKey },
+    capturedAt: context.startedAt
+  });
+  const configSnapshotId = input.configSnapshotId ?? input.repo.saveConfigSnapshot(configSnapshot);
 
-  const result = await collectAccountPublicXSourceBatch({
+  const sourceCollection = await collectAccountPublicXSourceBatch({
     repo: input.repo,
     account,
     provider: input.provider,
     traceId: context.traceId,
-    runId: `${context.traceId}:source-collection-run`,
-    auditEventId: `${context.traceId}:source-collection-event`,
+    runId: idsFor(context.traceId).sourceCollectionRunId,
+    auditEventId: idsFor(context.traceId).sourceCollectionAuditEventId,
     configSnapshotId,
     collectedAt: context.startedAt,
     maxQueries: input.maxQueries,
     perQueryLimit: input.perQueryLimit
   });
 
-  return summarizeCollection(result, configSnapshotId);
+  if (sourceCollection.status === "skipped") {
+    return summarizeSourceOnly(sourceCollection, configSnapshotId);
+  }
+  if (sourceCollection.materials.length === 0) {
+    return summarizeEmptyCollection(sourceCollection, configSnapshotId);
+  }
+
+  const topicRadar = buildTopicRadar({
+    account,
+    configSnapshot,
+    configSnapshotId,
+    prompt: await input.loadPrompt(),
+    materials: sourceCollection.materials,
+    recentPosts: input.recentPosts ?? [],
+    observedAt: context.startedAt,
+    candidatesLimit: input.candidatesLimit,
+    duplicateThreshold: input.duplicateThreshold
+  });
+  recordTopicRadarSelection({
+    repo: input.repo,
+    radar: topicRadar,
+    runId: idsFor(context.traceId).topicRunId,
+    auditEventId: idsFor(context.traceId).topicAuditEventId,
+    traceId: context.traceId,
+    startedAt: context.startedAt,
+    finishedAt: context.startedAt,
+    model: "topic-radar-production-v0",
+    actorId: "production_run_once_topic_radar"
+  });
+
+  const sourceContext = buildSourceContext({
+    account,
+    topic: topicRadar.selectedTopic,
+    materials: sourceCollection.materials,
+    recentPosts: input.recentPosts ?? [],
+    collectedAt: context.startedAt,
+    materialsLimit: input.materialsLimit,
+    recentPostsLimit: input.recentPostsLimit
+  });
+  recordSourceContextIngestion({
+    repo: input.repo,
+    sourceContext,
+    runId: idsFor(context.traceId).sourceContextRunId,
+    auditEventId: idsFor(context.traceId).sourceContextAuditEventId,
+    traceId: context.traceId,
+    startedAt: context.startedAt,
+    finishedAt: context.startedAt,
+    actorId: "production_run_once_source_ingestion"
+  });
+
+  return summarizeTopicAndContext(sourceCollection, topicRadar, sourceContext, configSnapshotId);
 }
 
 function seedRegistry(repo: RuntimeRepository, registry: AccountRegistry, now: string): void {
@@ -71,23 +128,91 @@ function seedRegistry(repo: RuntimeRepository, registry: AccountRegistry, now: s
   }
 }
 
-function summarizeCollection(result: PublicXSourceCollectionResult, configSnapshotId: string): OnlineOperationExecutorResult {
-  const skipped = result.status === "skipped";
+function idsFor(traceId: string): {
+  sourceCollectionRunId: string;
+  sourceCollectionAuditEventId: string;
+  topicRunId: string;
+  topicAuditEventId: string;
+  sourceContextRunId: string;
+  sourceContextAuditEventId: string;
+} {
   return {
-    outcome: skipped ? "skipped" : "completed",
-    finalAction: skipped ? "source_collection_skipped" : "source_collection_collected",
+    sourceCollectionRunId: `${traceId}:source-collection-run`,
+    sourceCollectionAuditEventId: `${traceId}:source-collection-event`,
+    topicRunId: `${traceId}:topic-run`,
+    topicAuditEventId: `${traceId}:topic-event`,
+    sourceContextRunId: `${traceId}:source-context-run`,
+    sourceContextAuditEventId: `${traceId}:source-context-event`
+  };
+}
+
+function summarizeTopicAndContext(
+  sourceCollection: PublicXSourceCollectionResult,
+  topicRadar: TopicRadarPackage,
+  sourceContext: SourceContextPackage,
+  configSnapshotId: string
+): OnlineOperationExecutorResult {
+  return {
+    outcome: "completed",
+    finalAction: "topic_selected",
     summary: {
-      executor: "production_source_collection_v1",
+      executor: "production_run_once_source_context_topic_v1",
       online: true,
       provider: "twitterapi.io",
-      source_collection_status: result.status,
-      skipped_reason: result.skippedReason,
-      query_count: result.queries.length,
-      request_units: result.requestUnits,
-      raw_count: result.rawCount,
-      material_count: result.materials.length,
-      duplicate_material_count: result.duplicateMaterialCount,
-      api_audit_ids: result.apiAuditIds,
+      source_collection_status: sourceCollection.status,
+      query_count: sourceCollection.queries.length,
+      request_units: sourceCollection.requestUnits,
+      raw_count: sourceCollection.rawCount,
+      material_count: sourceCollection.materials.length,
+      duplicate_material_count: sourceCollection.duplicateMaterialCount,
+      api_audit_ids: sourceCollection.apiAuditIds,
+      selected_topic_id: topicRadar.selectedTopic.id,
+      selected_topic_label: topicRadar.selectedTopic.label,
+      candidate_count: topicRadar.candidates.length,
+      source_context_material_count: sourceContext.materials.length,
+      recent_post_count: sourceContext.recentPosts.length,
+      config_snapshot_id: configSnapshotId
+    }
+  };
+}
+
+function summarizeSourceOnly(sourceCollection: PublicXSourceCollectionResult, configSnapshotId: string): OnlineOperationExecutorResult {
+  return {
+    outcome: "skipped",
+    finalAction: "source_collection_skipped",
+    summary: {
+      executor: "production_run_once_source_context_topic_v1",
+      online: true,
+      provider: "twitterapi.io",
+      source_collection_status: sourceCollection.status,
+      skipped_reason: sourceCollection.skippedReason,
+      query_count: sourceCollection.queries.length,
+      request_units: sourceCollection.requestUnits,
+      raw_count: sourceCollection.rawCount,
+      material_count: sourceCollection.materials.length,
+      duplicate_material_count: sourceCollection.duplicateMaterialCount,
+      api_audit_ids: sourceCollection.apiAuditIds,
+      config_snapshot_id: configSnapshotId
+    }
+  };
+}
+
+function summarizeEmptyCollection(sourceCollection: PublicXSourceCollectionResult, configSnapshotId: string): OnlineOperationExecutorResult {
+  return {
+    outcome: "skipped",
+    finalAction: "source_collection_empty",
+    summary: {
+      executor: "production_run_once_source_context_topic_v1",
+      online: true,
+      provider: "twitterapi.io",
+      source_collection_status: sourceCollection.status,
+      skipped_reason: "no_source_materials",
+      query_count: sourceCollection.queries.length,
+      request_units: sourceCollection.requestUnits,
+      raw_count: sourceCollection.rawCount,
+      material_count: 0,
+      duplicate_material_count: sourceCollection.duplicateMaterialCount,
+      api_audit_ids: sourceCollection.apiAuditIds,
       config_snapshot_id: configSnapshotId
     }
   };

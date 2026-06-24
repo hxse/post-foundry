@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { loadAccountInitialPrompt } from "../lib/accounts/account-prompt";
 import { isApiError } from "../lib/api/errors";
 import { redactSecrets } from "../lib/api/redaction";
 import { resolveAccountCredentials } from "../lib/api/secrets";
@@ -39,6 +40,7 @@ async function main(): Promise<void> {
         registry,
         accountKey: args.account,
         provider: new TwitterApiIoPublicXAdapter({ apiKey: credentials.twitterApiIoApiKey }),
+        loadPrompt: () => loadAccountInitialPrompt({ accountKey: args.account, secretsPath: args.secretsFile }),
         maxQueries: args.sourceMaxQueries,
         perQueryLimit: args.sourcePerQueryLimit
       })

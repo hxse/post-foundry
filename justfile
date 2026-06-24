@@ -118,10 +118,34 @@ debug-online-x-token-auth *ARGS:
 # Production online runtime: real account operation entrypoints
 # ----------------------------------------------------------------------
 
-# PROD ONLINE: run one source collection cycle with real external APIs.
-prod-online-run-once *ARGS:
-    bun run src/cli/run-once-online.ts {{ARGS}}
+# PROD ONLINE: run one source/topic/context cycle with real external APIs.
+[arg("account", long="account")]
+[arg("config_file", long="config-file")]
+[arg("secrets_file", long="secrets-file")]
+[arg("db_file", long="db-file")]
+[arg("source_max_queries", long="source-max-queries")]
+[arg("source_per_query_limit", long="source-per-query-limit")]
+[arg("lock_dir", long="lock-dir")]
+[arg("lock_ttl_seconds", long="lock-ttl-seconds")]
+[arg("lock_wait_timeout_seconds", long="lock-wait-timeout-seconds")]
+[arg("lock_poll_interval_ms", long="lock-poll-interval-ms")]
+prod-online-run-once account config_file secrets_file="secrets/accounts.local.json" db_file="data/post-foundry.sqlite" source_max_queries="3" source_per_query_limit="5" lock_dir="data/locks" lock_ttl_seconds="7200" lock_wait_timeout_seconds="7200" lock_poll_interval_ms="1000":
+    bun run src/cli/run-once-online.ts --account "{{ account }}" --config-file "{{ config_file }}" --secrets-file "{{ secrets_file }}" --db-file "{{ db_file }}" --source-max-queries "{{ source_max_queries }}" --source-per-query-limit "{{ source_per_query_limit }}" --lock-dir "{{ lock_dir }}" --lock-ttl-seconds "{{ lock_ttl_seconds }}" --lock-wait-timeout-seconds "{{ lock_wait_timeout_seconds }}" --lock-poll-interval-ms "{{ lock_poll_interval_ms }}"
 
-# PROD ONLINE: loop source collection cycles with real external APIs.
-prod-online-run-loop *ARGS:
-    bun run src/cli/run-loop-online.ts {{ARGS}}
+# PROD ONLINE: loop source/topic/context cycles with real external APIs.
+[arg("account", long="account")]
+[arg("config_file", long="config-file")]
+[arg("secrets_file", long="secrets-file")]
+[arg("db_file", long="db-file")]
+[arg("source_max_queries", long="source-max-queries")]
+[arg("source_per_query_limit", long="source-per-query-limit")]
+[arg("lock_dir", long="lock-dir")]
+[arg("lock_ttl_seconds", long="lock-ttl-seconds")]
+[arg("lock_wait_timeout_seconds", long="lock-wait-timeout-seconds")]
+[arg("lock_poll_interval_ms", long="lock-poll-interval-ms")]
+[arg("interval_seconds", long="interval-seconds")]
+[arg("jitter_seconds", long="jitter-seconds")]
+[arg("sleep_utc", long="sleep-utc")]
+[arg("max_iterations", long="max-iterations")]
+prod-online-run-loop account config_file secrets_file="secrets/accounts.local.json" db_file="data/post-foundry.sqlite" source_max_queries="3" source_per_query_limit="5" lock_dir="data/locks" lock_ttl_seconds="7200" lock_wait_timeout_seconds="7200" lock_poll_interval_ms="1000" interval_seconds="28800" jitter_seconds="0" sleep_utc="" max_iterations="":
+    set -- --account "{{ account }}" --config-file "{{ config_file }}" --secrets-file "{{ secrets_file }}" --db-file "{{ db_file }}" --source-max-queries "{{ source_max_queries }}" --source-per-query-limit "{{ source_per_query_limit }}" --lock-dir "{{ lock_dir }}" --lock-ttl-seconds "{{ lock_ttl_seconds }}" --lock-wait-timeout-seconds "{{ lock_wait_timeout_seconds }}" --lock-poll-interval-ms "{{ lock_poll_interval_ms }}" --interval-seconds "{{ interval_seconds }}" --jitter-seconds "{{ jitter_seconds }}"; if [ -n "{{ sleep_utc }}" ]; then set -- "$@" --sleep-utc "{{ sleep_utc }}"; fi; if [ -n "{{ max_iterations }}" ]; then set -- "$@" --max-iterations "{{ max_iterations }}"; fi; bun run src/cli/run-loop-online.ts "$@"

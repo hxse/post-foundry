@@ -35,6 +35,9 @@ test-audit-offline: _node-for-vitest
 test-manual-notification-offline: _node-for-vitest
     bun run test:manual-notification-offline
 
+test-online-runner-offline: _node-for-vitest
+    bun run test:online-runner-offline
+
 test-offline-orchestration: _node-for-vitest
     bun run test:offline-orchestration
 
@@ -70,3 +73,9 @@ x-token *ARGS:
 
 x-token-auth *ARGS:
     bun run src/cli/x-token-auth.ts {{ARGS}}
+
+run-once-online *ARGS:
+    bun run src/cli/run-once-online.ts {{ARGS}}
+
+run-loop-online *ARGS:
+    bun run src/cli/run-loop-online.ts {{ARGS}}

@@ -66,14 +66,6 @@ const postingPolicySchema = z
     }
   });
 
-const budgetPolicySchema = z
-  .object({
-    x_data_usd_monthly_cap: z.number().nonnegative(),
-    llm_usd_monthly_cap: z.number().nonnegative(),
-    public_x_monthly_request_cap: z.number().int().nonnegative().optional()
-  })
-  .strict();
-
 const dataSourcesSchema = z
   .object({
     public_x: z
@@ -106,7 +98,6 @@ const accountConfigSchema = z
     config_version: z.number().int().positive(),
     topics: topicsSchema,
     posting: postingPolicySchema,
-    budget: budgetPolicySchema,
     data_sources: dataSourcesSchema,
     style: stylePolicySchema
   })

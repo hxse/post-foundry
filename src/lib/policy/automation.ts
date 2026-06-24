@@ -31,11 +31,7 @@ export type AutomationPolicyContext = {
   evaluatedAt: string;
   postedTodayCount: number;
   lastPostedAt?: string;
-  monthlyXDataSpendUsd: number;
-  monthlyLlmSpendUsd: number;
   publicXRequestsThisMonth: number;
-  estimatedXDataSpendUsd: number;
-  estimatedLlmSpendUsd: number;
   estimatedPublicXRequests: number;
 };
 
@@ -95,11 +91,7 @@ const automationPolicyContextSchema = z
     evaluatedAt: z.string().datetime(),
     postedTodayCount: z.number().int().nonnegative(),
     lastPostedAt: z.string().datetime().optional(),
-    monthlyXDataSpendUsd: z.number().nonnegative().default(0),
-    monthlyLlmSpendUsd: z.number().nonnegative().default(0),
     publicXRequestsThisMonth: z.number().int().nonnegative().default(0),
-    estimatedXDataSpendUsd: z.number().nonnegative().default(0),
-    estimatedLlmSpendUsd: z.number().nonnegative().default(0),
     estimatedPublicXRequests: z.number().int().nonnegative().default(0)
   })
   .strict();
@@ -170,11 +162,11 @@ export function evaluateAutomationPolicy(input: EvaluateAutomationPolicyInput): 
     addReason(reasons, "cooldown_active", "block", `cooldown still has ${cooldownRemainingMinutes} minutes remaining`);
   }
 
-  const budgetReasons = evaluateBudgets(input.account, context);
-  for (const reason of budgetReasons) {
+  const requestCapReasons = evaluateRequestCaps(input.account, context);
+  for (const reason of requestCapReasons) {
     addReason(reasons, reason.code, "block", reason.message);
   }
-  addCheck(checks, "budget", budgetReasons.length === 0, "projected usage must stay within account budgets");
+  addCheck(checks, "public_x_request_cap", requestCapReasons.length === 0, "projected public X request usage must stay within account cap");
 
   const outcome = chooseOutcome(reasons);
   const route = chooseRoute(outcome);
@@ -326,19 +318,10 @@ function getCooldownRemainingMinutes(account: AccountConfig, context: Automation
   return Math.max(0, account.posting.cooldown_minutes - elapsedMinutes);
 }
 
-function evaluateBudgets(account: AccountConfig, context: AutomationPolicyContext): Array<{ code: string; message: string }> {
+function evaluateRequestCaps(account: AccountConfig, context: AutomationPolicyContext): Array<{ code: string; message: string }> {
   const reasons: Array<{ code: string; message: string }> = [];
-  if (context.monthlyXDataSpendUsd + context.estimatedXDataSpendUsd > account.budget.x_data_usd_monthly_cap) {
-    reasons.push({ code: "x_data_budget_exceeded", message: "projected X data spend exceeds monthly account cap" });
-  }
-  if (context.monthlyLlmSpendUsd + context.estimatedLlmSpendUsd > account.budget.llm_usd_monthly_cap) {
-    reasons.push({ code: "llm_budget_exceeded", message: "projected LLM spend exceeds monthly account cap" });
-  }
-  if (
-    account.budget.public_x_monthly_request_cap !== undefined &&
-    context.publicXRequestsThisMonth + context.estimatedPublicXRequests > account.budget.public_x_monthly_request_cap
-  ) {
-    reasons.push({ code: "public_x_request_budget_exceeded", message: "projected public X request usage exceeds monthly account cap" });
+  if (context.publicXRequestsThisMonth + context.estimatedPublicXRequests > account.data_sources.public_x.monthly_request_cap) {
+    reasons.push({ code: "public_x_request_cap_exceeded", message: "projected public X request usage exceeds monthly account cap" });
   }
   return reasons;
 }
@@ -352,9 +335,7 @@ function chooseOutcome(reasons: AutomationPolicyReason[]): AutomationPolicyOutco
           "real_posting_disabled",
           "daily_max_reached",
           "cooldown_active",
-          "x_data_budget_exceeded",
-          "llm_budget_exceeded",
-          "public_x_request_budget_exceeded"
+          "public_x_request_cap_exceeded"
         ].includes(reason.code)
       );
     return onlyOperationalBlocks ? "defer" : "reject";

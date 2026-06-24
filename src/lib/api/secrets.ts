@@ -23,6 +23,14 @@ const telegramNotificationSchema = z
   })
   .strict();
 
+const openAiProviderSchema = z
+  .object({
+    api_key: z.string().min(1).optional(),
+    model: z.string().min(1).optional(),
+    base_url: z.string().min(1).optional()
+  })
+  .strict();
+
 const accountSecretsSchema = z
   .object({
     initial_prompt: z.string().trim().min(1).optional(),
@@ -59,7 +67,8 @@ const secretsFileSchema = z
       .object({
         twitterapi_io: providerCredentialSchema.optional(),
         x_official: xOfficialOAuthAppSchema.optional(),
-        telegram: telegramNotificationSchema.optional()
+        telegram: telegramNotificationSchema.optional(),
+        openai: openAiProviderSchema.optional()
       })
       .strict()
       .optional(),
@@ -79,6 +88,12 @@ export type AccountCredentials = {
 export type TelegramNotificationCredentials = {
   botToken?: string;
   notificationChannelChatId?: string;
+};
+
+export type OpenAiCredentials = {
+  apiKey?: string;
+  model?: string;
+  baseUrl?: string;
 };
 
 export type CredentialEnv = Partial<Record<string, string | undefined>>;
@@ -182,5 +197,21 @@ export async function resolveTelegramNotificationCredentials(params: {
   return {
     botToken: env.TELEGRAM_BOT_TOKEN ?? telegram?.bot_token,
     notificationChannelChatId: env.TELEGRAM_NOTIFICATION_CHANNEL_CHAT_ID ?? telegram?.notification_channel_chat_id
+  };
+}
+
+export async function resolveOpenAiCredentials(params: {
+  secretsPath?: string;
+  env?: CredentialEnv;
+} = {}): Promise<OpenAiCredentials> {
+  const env = params.env ?? process.env;
+  const secretsPath = params.secretsPath ?? env.POST_FOUNDRY_SECRETS_FILE ?? defaultSecretsPath;
+  const secrets = await loadSecretsFile(secretsPath);
+  const openai = secrets.global_providers?.openai;
+
+  return {
+    apiKey: env.OPENAI_API_KEY ?? openai?.api_key,
+    model: env.OPENAI_MODEL ?? openai?.model,
+    baseUrl: env.OPENAI_BASE_URL ?? openai?.base_url
   };
 }

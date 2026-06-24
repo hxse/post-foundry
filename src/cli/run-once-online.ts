@@ -2,12 +2,15 @@ import { readFile } from "node:fs/promises";
 import { loadAccountInitialPrompt } from "../lib/accounts/account-prompt";
 import { isApiError } from "../lib/api/errors";
 import { redactSecrets } from "../lib/api/redaction";
-import { resolveAccountCredentials } from "../lib/api/secrets";
+import { resolveAccountCredentials, resolveOpenAiCredentials, resolveTelegramNotificationCredentials } from "../lib/api/secrets";
 import { parseAccountRegistryConfig } from "../lib/accounts/registry";
 import { parseProductionOnlineRunOnceArgs } from "../lib/orchestration/production-runner-args";
-import { createProductionSourceCollectionExecutor } from "../lib/orchestration/production-source-collection-executor";
+import { createProductionOperationExecutor } from "../lib/orchestration/production-operation-executor";
 import { runOnlineOperationOnce } from "../lib/orchestration/online-runner";
 import { TwitterApiIoPublicXAdapter } from "../lib/providers/twitterapi-io";
+import { OpenAiResponsesDraftGenerator } from "../lib/providers/openai-draft-generator";
+import { TelegramNotifier } from "../lib/providers/telegram-notifier";
+import { XOfficialPublisherClient } from "../lib/providers/x-official-publisher";
 import { RuntimeRepository } from "../lib/storage/repositories";
 import { openRuntimeDatabase } from "../lib/storage/sqlite";
 
@@ -15,6 +18,8 @@ async function main(): Promise<void> {
   const args = parseProductionOnlineRunOnceArgs(process.argv.slice(2));
   const registry = parseAccountRegistryConfig(JSON.parse(await readFile(args.configFile, "utf8")) as unknown);
   const credentials = await resolveAccountCredentials({ accountKey: args.account, secretsPath: args.secretsFile });
+  const openAiCredentials = await resolveOpenAiCredentials({ secretsPath: args.secretsFile });
+  const telegramCredentials = await resolveTelegramNotificationCredentials({ secretsPath: args.secretsFile });
   const db = openRuntimeDatabase({ path: args.dbFile });
 
   try {
@@ -25,11 +30,21 @@ async function main(): Promise<void> {
       lockTtlSeconds: args.lockTtlSeconds,
       lockWaitTimeoutSeconds: args.lockWaitTimeoutSeconds,
       lockPollIntervalMs: args.lockPollIntervalMs,
-      operation: createProductionSourceCollectionExecutor({
+      operation: createProductionOperationExecutor({
         repo,
         registry,
         accountKey: args.account,
-        provider: new TwitterApiIoPublicXAdapter({ apiKey: credentials.twitterApiIoApiKey }),
+        publicXProvider: new TwitterApiIoPublicXAdapter({ apiKey: credentials.twitterApiIoApiKey }),
+        draftGenerator: new OpenAiResponsesDraftGenerator({
+          apiKey: openAiCredentials.apiKey,
+          model: openAiCredentials.model,
+          baseUrl: openAiCredentials.baseUrl
+        }),
+        autoPoster: new XOfficialPublisherClient({ accessToken: credentials.xOfficialAccessToken }),
+        notificationSender: new TelegramNotifier({
+          botToken: telegramCredentials.botToken,
+          chatId: telegramCredentials.notificationChannelChatId
+        }),
         loadPrompt: () => loadAccountInitialPrompt({ accountKey: args.account, secretsPath: args.secretsFile }),
         maxQueries: args.sourceMaxQueries,
         perQueryLimit: args.sourcePerQueryLimit

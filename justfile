@@ -53,6 +53,9 @@ test-offline-policy: _node-for-vitest
 test-offline-production-run-once: _node-for-vitest
     bun run test:production-run-once-offline
 
+test-offline-production-operation: _node-for-vitest
+    bun run test:production-operation-offline
+
 test-offline-source-adapters: _node-for-vitest
     bun run test:source-adapters-offline
 
@@ -118,7 +121,7 @@ debug-online-x-token-auth *ARGS:
 # Production online runtime: real account operation entrypoints
 # ----------------------------------------------------------------------
 
-# PROD ONLINE: run one source/topic/context cycle with real external APIs.
+# PROD ONLINE: run one v0 operation loop with real external APIs.
 [arg("account", long="account")]
 [arg("config_file", long="config-file")]
 [arg("secrets_file", long="secrets-file")]
@@ -132,7 +135,7 @@ debug-online-x-token-auth *ARGS:
 prod-online-run-once account config_file secrets_file="secrets/accounts.local.json" db_file="data/post-foundry.sqlite" source_max_queries="3" source_per_query_limit="5" lock_dir="data/locks" lock_ttl_seconds="7200" lock_wait_timeout_seconds="7200" lock_poll_interval_ms="1000":
     bun run src/cli/run-once-online.ts --account "{{ account }}" --config-file "{{ config_file }}" --secrets-file "{{ secrets_file }}" --db-file "{{ db_file }}" --source-max-queries "{{ source_max_queries }}" --source-per-query-limit "{{ source_per_query_limit }}" --lock-dir "{{ lock_dir }}" --lock-ttl-seconds "{{ lock_ttl_seconds }}" --lock-wait-timeout-seconds "{{ lock_wait_timeout_seconds }}" --lock-poll-interval-ms "{{ lock_poll_interval_ms }}"
 
-# PROD ONLINE: loop source/topic/context cycles with real external APIs.
+# PROD ONLINE: loop v0 operation cycles with real external APIs.
 [arg("account", long="account")]
 [arg("config_file", long="config-file")]
 [arg("secrets_file", long="secrets-file")]

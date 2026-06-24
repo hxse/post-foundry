@@ -18,8 +18,18 @@
       "enabled": true,
       "config_version": 1,
       "topics": {
-        "include": ["AI", "finance", "open_source", "frontier_tech", "digital_nomad"],
-        "exclude": ["politics", "gender_war", "social_issues"]
+        "include": [
+          "AI",
+          "finance",
+          "open_source",
+          "frontier_tech",
+          "digital_nomad"
+        ],
+        "exclude": [
+          "politics",
+          "gender_war",
+          "social_issues"
+        ]
       },
       "posting": {
         "cadence_hours": 6,
@@ -29,23 +39,29 @@
         "require_approval": false,
         "real_posting_enabled": false
       },
-      "budget": {
-        "x_data_usd_monthly_cap": 10,
-        "llm_usd_monthly_cap": 20,
-        "public_x_monthly_request_cap": 1000
-      },
       "data_sources": {
         "public_x": {
           "provider": "twitterapi.io",
           "enabled": true,
-          "search_keywords": ["AI", "open_source", "frontier_tech"],
+          "search_keywords": [
+            "AI",
+            "open_source",
+            "frontier_tech"
+          ],
           "monthly_request_cap": 1000
         }
       },
       "style": {
         "voice": "natural, concise, analytical",
-        "rules": ["avoid hype", "prefer concrete claims", "separate facts from opinion"],
-        "banned_phrases": ["smoke test", "PostFoundry"]
+        "rules": [
+          "avoid hype",
+          "prefer concrete claims",
+          "separate facts from opinion"
+        ],
+        "banned_phrases": [
+          "smoke test",
+          "PostFoundry"
+        ]
       }
     },
     {
@@ -57,8 +73,17 @@
       "enabled": true,
       "config_version": 1,
       "topics": {
-        "include": ["ai_infra", "fintech", "open_source", "devtools", "silicon_valley"],
-        "exclude": ["election_process_claims", "culture_war"]
+        "include": [
+          "ai_infra",
+          "fintech",
+          "open_source",
+          "devtools",
+          "silicon_valley"
+        ],
+        "exclude": [
+          "election_process_claims",
+          "culture_war"
+        ]
       },
       "posting": {
         "cadence_hours": 6,
@@ -68,23 +93,29 @@
         "require_approval": false,
         "real_posting_enabled": false
       },
-      "budget": {
-        "x_data_usd_monthly_cap": 15,
-        "llm_usd_monthly_cap": 30,
-        "public_x_monthly_request_cap": 1200
-      },
       "data_sources": {
         "public_x": {
           "provider": "twitterapi.io",
           "enabled": true,
-          "search_keywords": ["ai_infra", "devtools", "open_source"],
+          "search_keywords": [
+            "ai_infra",
+            "devtools",
+            "open_source"
+          ],
           "monthly_request_cap": 1200
         }
       },
       "style": {
         "voice": "calm, precise, builder-oriented",
-        "rules": ["avoid culture war", "prefer primary sources", "keep claims auditable"],
-        "banned_phrases": ["smoke test", "PostFoundry"]
+        "rules": [
+          "avoid culture war",
+          "prefer primary sources",
+          "keep claims auditable"
+        ],
+        "banned_phrases": [
+          "smoke test",
+          "PostFoundry"
+        ]
       }
     }
   ],

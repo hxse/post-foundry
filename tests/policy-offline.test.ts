@@ -134,24 +134,24 @@ describe("automation policy engine", () => {
         postedTodayCount: account.posting.daily_max
       }
     });
-    const budget = evaluateAutomationPolicy({
+    const requestCap = evaluateAutomationPolicy({
       account,
       candidate: {
         id: "candidate-defer-2",
-        text: "AI 预算也是产品判断的一部分。",
+        text: "AI 请求上限也是运行节奏的一部分。",
         topicTags: ["AI"]
       },
       context: {
         ...baseContext(),
-        monthlyLlmSpendUsd: account.budget.llm_usd_monthly_cap,
-        estimatedLlmSpendUsd: 0.01
+        publicXRequestsThisMonth: account.data_sources.public_x.monthly_request_cap,
+        estimatedPublicXRequests: 1
       }
     });
 
     expect(dailyMax.outcome).toBe("defer");
     expect(dailyMax.reasons.map((reason) => reason.code)).toContain("daily_max_reached");
-    expect(budget.outcome).toBe("defer");
-    expect(budget.reasons.map((reason) => reason.code)).toContain("llm_budget_exceeded");
+    expect(requestCap.outcome).toBe("defer");
+    expect(requestCap.reasons.map((reason) => reason.code)).toContain("public_x_request_cap_exceeded");
   });
 
   it("records policy decisions into the audit ledger by account_uuid", () => {
@@ -313,11 +313,7 @@ function baseContext() {
     evaluatedAt: now,
     postedTodayCount: 0,
     lastPostedAt: "2026-06-22T22:00:00.000Z",
-    monthlyXDataSpendUsd: 1,
-    monthlyLlmSpendUsd: 1,
     publicXRequestsThisMonth: 10,
-    estimatedXDataSpendUsd: 0,
-    estimatedLlmSpendUsd: 0.01,
     estimatedPublicXRequests: 0
   };
 }

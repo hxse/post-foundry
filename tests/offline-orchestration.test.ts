@@ -429,11 +429,7 @@ function basePolicyContext() {
     evaluatedAt: now,
     postedTodayCount: 0,
     lastPostedAt: "2026-06-22T20:00:00.000Z",
-    monthlyXDataSpendUsd: 1,
-    monthlyLlmSpendUsd: 1,
     publicXRequestsThisMonth: 10,
-    estimatedXDataSpendUsd: 0,
-    estimatedLlmSpendUsd: 0.01,
     estimatedPublicXRequests: 0
   };
 }

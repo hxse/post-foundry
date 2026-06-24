@@ -38,6 +38,9 @@ test-manual-notification-offline: _node-for-vitest
 test-online-runner-offline: _node-for-vitest
     bun run test:online-runner-offline
 
+test-run-once-operation-executor-offline: _node-for-vitest
+    bun run test:run-once-operation-executor-offline
+
 test-offline-orchestration: _node-for-vitest
     bun run test:offline-orchestration
 
@@ -67,6 +70,9 @@ debug-api-online *ARGS:
 
 debug-tg-online *ARGS:
     bun run src/cli/debug-tg-online.ts {{ARGS}}
+
+debug-run-once-offline-fixture *ARGS:
+    bun run src/cli/debug-run-once-offline-fixture.ts {{ARGS}}
 
 x-token *ARGS:
     bun run src/cli/x-token.ts {{ARGS}}

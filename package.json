@@ -15,6 +15,7 @@
     "test:audit-offline": "vitest run tests/audit-ledger-offline.test.ts",
     "test:manual-notification-offline": "vitest run tests/manual-notification-offline.test.ts",
     "test:online-runner-offline": "vitest run tests/online-runner-offline.test.ts",
+    "test:run-once-operation-executor-offline": "vitest run tests/run-once-operation-executor-offline.test.ts",
     "test:offline-orchestration": "vitest run tests/offline-orchestration.test.ts",
     "test:policy-offline": "vitest run tests/policy-offline.test.ts",
     "test:source-adapters-offline": "vitest run tests/source-adapters-offline.test.ts",

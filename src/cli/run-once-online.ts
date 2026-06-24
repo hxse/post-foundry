@@ -27,9 +27,7 @@ async function main(): Promise<void> {
     lockTtlSeconds: args.lockTtlSeconds,
     lockWaitTimeoutSeconds: args.lockWaitTimeoutSeconds,
     lockPollIntervalMs: args.lockPollIntervalMs,
-    operation: createSkippedOnlineOperationExecutor(
-      ".016 runner baseline is wired; real online operation executor is not connected yet"
-    )
+    operation: createSkippedOnlineOperationExecutor("production operation executor is not wired yet")
   });
 
   console.log("online run once: ok");

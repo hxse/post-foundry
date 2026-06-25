@@ -182,6 +182,11 @@ describe("api offline contract", () => {
         global_providers: { twitterapi_io: { api_key: "global-twitter-key" } },
         accounts: {
           "zh-tech": {
+            providers: {
+              twitterapi_io: {
+                api_key: "optional-account-level-twitterapi-io-api-key"
+              }
+            },
             x_official: {
               access_token: "x-account-token"
             }

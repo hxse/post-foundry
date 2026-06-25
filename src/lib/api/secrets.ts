@@ -100,6 +100,23 @@ export type CredentialEnv = Partial<Record<string, string | undefined>>;
 
 export const defaultSecretsPath = "secrets/accounts.local.json";
 
+export function isPlaceholderSecretValue(value: string | undefined): boolean {
+  if (!value) {
+    return false;
+  }
+  const normalized = value.trim().toLowerCase();
+  return (
+    normalized.startsWith("replace-with-") ||
+    normalized.startsWith("optional-") ||
+    normalized.startsWith("@replace_") ||
+    normalized.includes("replace_with")
+  );
+}
+
+function firstUsableSecretValue(...values: Array<string | undefined>): string | undefined {
+  return values.find((value) => value !== undefined && value.trim().length > 0 && !isPlaceholderSecretValue(value));
+}
+
 export async function loadSecretsFile(path: string): Promise<SecretsFile> {
   let raw: string;
   try {
@@ -169,13 +186,14 @@ export async function resolveAccountCredentials(params: {
     });
   }
 
-  const twitterApiIoApiKey =
-    env.TWITTERAPI_IO_API_KEY ??
-    account.providers?.twitterapi_io?.api_key ??
-    secrets.global_providers?.twitterapi_io?.api_key;
+  const twitterApiIoApiKey = firstUsableSecretValue(
+    env.TWITTERAPI_IO_API_KEY,
+    account.providers?.twitterapi_io?.api_key,
+    secrets.global_providers?.twitterapi_io?.api_key
+  );
 
-  const xOfficialAccessToken = env.X_DEBUG_ACCESS_TOKEN ?? account.x_official?.access_token;
-  const xOfficialRefreshToken = env.X_DEBUG_REFRESH_TOKEN ?? account.x_official?.refresh_token;
+  const xOfficialAccessToken = firstUsableSecretValue(env.X_DEBUG_ACCESS_TOKEN, account.x_official?.access_token);
+  const xOfficialRefreshToken = firstUsableSecretValue(env.X_DEBUG_REFRESH_TOKEN, account.x_official?.refresh_token);
 
   return {
     accountKey,
@@ -195,8 +213,8 @@ export async function resolveTelegramNotificationCredentials(params: {
   const telegram = secrets.global_providers?.telegram;
 
   return {
-    botToken: env.TELEGRAM_BOT_TOKEN ?? telegram?.bot_token,
-    notificationChannelChatId: env.TELEGRAM_NOTIFICATION_CHANNEL_CHAT_ID ?? telegram?.notification_channel_chat_id
+    botToken: firstUsableSecretValue(env.TELEGRAM_BOT_TOKEN, telegram?.bot_token),
+    notificationChannelChatId: firstUsableSecretValue(env.TELEGRAM_NOTIFICATION_CHANNEL_CHAT_ID, telegram?.notification_channel_chat_id)
   };
 }
 
@@ -210,8 +228,8 @@ export async function resolveOpenAiCredentials(params: {
   const openai = secrets.global_providers?.openai;
 
   return {
-    apiKey: env.OPENAI_API_KEY ?? openai?.api_key,
-    model: env.OPENAI_MODEL ?? openai?.model,
-    baseUrl: env.OPENAI_BASE_URL ?? openai?.base_url
+    apiKey: firstUsableSecretValue(env.OPENAI_API_KEY, openai?.api_key),
+    model: firstUsableSecretValue(env.OPENAI_MODEL, openai?.model),
+    baseUrl: firstUsableSecretValue(env.OPENAI_BASE_URL, openai?.base_url)
   };
 }

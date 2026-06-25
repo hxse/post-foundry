@@ -5,6 +5,7 @@ import { redactSecrets } from "../lib/api/redaction";
 import { resolveAccountCredentials, resolveOpenAiCredentials, resolveTelegramNotificationCredentials } from "../lib/api/secrets";
 import { parseAccountRegistryConfig } from "../lib/accounts/registry";
 import { parseProductionOnlineRunOnceArgs } from "../lib/orchestration/production-runner-args";
+import { normalizeProductionPreflightError, runProductionLocalPreflight } from "../lib/orchestration/production-preflight";
 import { createProductionOperationExecutor } from "../lib/orchestration/production-operation-executor";
 import { runOnlineOperationOnce } from "../lib/orchestration/online-runner";
 import { TwitterApiIoPublicXAdapter } from "../lib/providers/twitterapi-io";
@@ -12,14 +13,34 @@ import { OpenAiResponsesDraftGenerator } from "../lib/providers/openai-draft-gen
 import { TelegramNotifier } from "../lib/providers/telegram-notifier";
 import { XOfficialPublisherClient } from "../lib/providers/x-official-publisher";
 import { RuntimeRepository } from "../lib/storage/repositories";
-import { openRuntimeDatabase } from "../lib/storage/sqlite";
 
 async function main(): Promise<void> {
   const args = parseProductionOnlineRunOnceArgs(process.argv.slice(2));
-  const registry = parseAccountRegistryConfig(JSON.parse(await readFile(args.configFile, "utf8")) as unknown);
-  const credentials = await resolveAccountCredentials({ accountKey: args.account, secretsPath: args.secretsFile });
-  const openAiCredentials = await resolveOpenAiCredentials({ secretsPath: args.secretsFile });
-  const telegramCredentials = await resolveTelegramNotificationCredentials({ secretsPath: args.secretsFile });
+  let registry: ReturnType<typeof parseAccountRegistryConfig>;
+  let credentials: Awaited<ReturnType<typeof resolveAccountCredentials>>;
+  let openAiCredentials: Awaited<ReturnType<typeof resolveOpenAiCredentials>>;
+  let telegramCredentials: Awaited<ReturnType<typeof resolveTelegramNotificationCredentials>>;
+  const loadPrompt = () => loadAccountInitialPrompt({ accountKey: args.account, secretsPath: args.secretsFile });
+  try {
+    registry = parseAccountRegistryConfig(JSON.parse(await readFile(args.configFile, "utf8")) as unknown);
+    credentials = await resolveAccountCredentials({ accountKey: args.account, secretsPath: args.secretsFile });
+    openAiCredentials = await resolveOpenAiCredentials({ secretsPath: args.secretsFile });
+    telegramCredentials = await resolveTelegramNotificationCredentials({ secretsPath: args.secretsFile });
+    const preflight = await runProductionLocalPreflight({
+      registry,
+      accountKey: args.account,
+      accountCredentials: credentials,
+      openAiCredentials,
+      telegramCredentials,
+      loadPrompt,
+      env: process.env
+    });
+    printPreflightResult(preflight);
+  } catch (error) {
+    throw normalizeProductionPreflightError(error);
+  }
+
+  const { openRuntimeDatabase } = await import("../lib/storage/sqlite");
   const db = openRuntimeDatabase({ path: args.dbFile });
 
   try {
@@ -45,7 +66,7 @@ async function main(): Promise<void> {
           botToken: telegramCredentials.botToken,
           chatId: telegramCredentials.notificationChannelChatId
         }),
-        loadPrompt: () => loadAccountInitialPrompt({ accountKey: args.account, secretsPath: args.secretsFile }),
+        loadPrompt,
         maxQueries: args.sourceMaxQueries,
         perQueryLimit: args.sourcePerQueryLimit
       })
@@ -55,6 +76,12 @@ async function main(): Promise<void> {
   } finally {
     db.close();
   }
+}
+
+function printPreflightResult(result: Awaited<ReturnType<typeof runProductionLocalPreflight>>): void {
+  console.log("production_preflight=ready");
+  console.log("account_uuid=" + result.accountUuid);
+  console.log("prompt_sha256=" + result.promptSha256);
 }
 
 function printRunResult(

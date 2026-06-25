@@ -7,10 +7,11 @@ import { describe, expect, it } from "vitest";
 import accountsExample from "../config/accounts.example.json";
 import type { AccountInitialPrompt } from "../src/lib/accounts/account-prompt";
 import { parseAccountRegistryConfig, resolveAccountRef, type AccountConfig, type AccountRegistry } from "../src/lib/accounts/registry";
+import { buildAccountMemory } from "../src/lib/memory/account-memory";
 import { createProductionOperationExecutor } from "../src/lib/orchestration/production-operation-executor";
 import { runOnlineOperationOnce } from "../src/lib/orchestration/online-runner";
 import type { ProductionDraftGenerationInput, ProductionDraftGenerator } from "../src/lib/llm/production-draft-generator";
-import type { PublicXDataProvider, PublicXSearchInput } from "../src/lib/providers/public-x";
+import type { PublicXDataProvider, PublicXPostSnapshot, PublicXSearchInput } from "../src/lib/providers/public-x";
 import type { TelegramSendMessageInput, TelegramSentMessage } from "../src/lib/providers/telegram-notifier";
 import type { XPostInput, XPostOutput } from "../src/lib/providers/x-official-publisher";
 import { RuntimeRepository } from "../src/lib/storage/repositories";
@@ -63,10 +64,15 @@ describe("production v0 operation loop", () => {
           policy_outcome: "auto_post",
           policy_route: "x_official_auto",
           final_action_kind: "x_auto_post",
-          tweet_id: "tweet-prod-1"
+          tweet_id: "tweet-prod-1",
+          post_readback_status: "confirmed",
+          post_readback_text_matches_candidate: true,
+          post_readback_like_count: 12,
+          post_readback_view_count: 1200
         }
       });
       expect(publicX.calls).toEqual([{ query: "AI", limit: 2 }]);
+      expect(publicX.lookups).toEqual(["tweet-prod-1"]);
       expect(draftGenerator.requests).toHaveLength(1);
       expect(draftGenerator.requests[0].prompt.prompt).toBe(promptText);
       expect(autoPoster.posts).toEqual([
@@ -85,7 +91,11 @@ describe("production v0 operation loop", () => {
       expect(JSON.stringify(runs)).not.toContain(promptText);
       expect(JSON.stringify(runs)).toContain(sha256(promptText));
       expect(repo.listApiCallAuditForAccount(account.account_uuid).map((audit) => `${audit.provider}:${audit.operation}:${audit.status}`)).toEqual(
-        expect.arrayContaining(["twitterapi.io:public_x_search:succeeded", "openai:llm_draft_generation:succeeded"])
+        expect.arrayContaining([
+          "twitterapi.io:public_x_search:succeeded",
+          "openai:llm_draft_generation:succeeded",
+          "twitterapi.io:public_x_post_readback:succeeded"
+        ])
       );
       expect(repo.listAiDecisionsForAccount(account.account_uuid)).toMatchObject([
         {
@@ -100,8 +110,231 @@ describe("production v0 operation loop", () => {
         }
       ]);
       expect(repo.listAuditEventsForAccount(account.account_uuid).map((event) => event.event_type)).toEqual(
-        expect.arrayContaining(["topic_selected", "source_context_built", "ai_draft_created", "automation_policy_decided", "x_official_auto_post_created"])
+        expect.arrayContaining([
+          "topic_selected",
+          "source_context_built",
+          "ai_draft_created",
+          "automation_policy_decided",
+          "x_official_auto_post_created",
+          "x_post_readback_confirmed"
+        ])
       );
+      expect(repo.listEvidenceRefsForAccount(account.account_uuid)).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: "trace-prod-v0-auto-1:post-readback-evidence",
+            source_type: "public_x_post",
+            provider: "twitterapi.io",
+            source_ref: "tweet:tweet-prod-1"
+          })
+        ])
+      );
+      const memory = buildAccountMemory({ repo, account, capturedAt: now });
+      expect(memory.traceSummaries[0]).toMatchObject({
+        finalAction: {
+          actionType: "x_official_auto_post",
+          status: "succeeded"
+        },
+        performance: {
+          readbackStatus: "confirmed",
+          tweetId: "tweet-prod-1",
+          textMatchesCandidate: true,
+          metrics: {
+            likeCount: 12,
+            viewCount: 1200
+          }
+        }
+      });
+      expect(memory.nextRunHints.join("\n")).toContain("compare confirmed post metrics");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("defers auto-post when readback reservation would exceed the public X request cap", async () => {
+    const dir = await tempDir();
+    const db = openMigratedTestDb();
+    try {
+      const repo = new RuntimeRepository(db);
+      const registry = registryWithPublicXRequestCap("zh-tech", 1);
+      const account = resolveAccountRef(registry, { accountKey: "zh-tech" }).account;
+      const publicX = fakePublicXProvider();
+      const autoPoster = fakeAutoPoster();
+
+      const result = await runOnlineOperationOnce({
+        accountKey: "zh-tech",
+        lockDir: dir,
+        traceId: "trace-prod-v0-readback-cap-1",
+        now: fixedNow(now),
+        enableHeartbeat: false,
+        operation: createProductionOperationExecutor({
+          repo,
+          registry,
+          accountKey: "zh-tech",
+          publicXProvider: publicX,
+          draftGenerator: fakeDraftGenerator(naturalDraftOutput("draft-prod-readback-cap-1")),
+          autoPoster,
+          notificationSender: fakeNotifier(),
+          loadPrompt: () => initialPrompt("zh-tech"),
+          maxQueries: 1,
+          perQueryLimit: 2
+        })
+      });
+
+      expect(result).toMatchObject({
+        outcome: "skipped",
+        finalAction: "policy_terminal_noop",
+        summary: {
+          policy_outcome: "defer",
+          policy_route: "deferred",
+          final_action_kind: "policy_terminal"
+        }
+      });
+      expect(publicX.calls).toEqual([{ query: "AI", limit: 2 }]);
+      expect(publicX.lookups).toHaveLength(0);
+      expect(autoPoster.posts).toHaveLength(0);
+      const policyRun = repo.listAiRunsForAccount(account.account_uuid).find((run) => run.purpose === "automation_policy");
+      expect(policyRun?.input_json).toContain('"estimatedPublicXRequests":1');
+      expect(repo.listAiDecisionsForAccount(account.account_uuid)).toMatchObject([
+        {
+          outcome: "defer",
+          requires_human_review: 0
+        }
+      ]);
+      expect(JSON.parse(repo.listAiDecisionsForAccount(account.account_uuid)[0].rationale_json).reasons.map((reason: { code: string }) => reason.code)).toContain(
+        "public_x_request_cap_exceeded"
+      );
+      expect(repo.listAiActionsForAccount(account.account_uuid)).toMatchObject([
+        {
+          action_type: "policy_terminal_noop",
+          status: "skipped"
+        }
+      ]);
+      expect(repo.listApiCallAuditForAccount(account.account_uuid).map((audit) => [audit.provider, audit.operation, audit.status].join(":"))).not.toContain(
+        "twitterapi.io:public_x_post_readback:succeeded"
+      );
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the posted action succeeded when third-party readback has not indexed the post yet", async () => {
+    const dir = await tempDir();
+    const db = openMigratedTestDb();
+    try {
+      const repo = new RuntimeRepository(db);
+      const registry = registryWithRealPostingEnabled("zh-tech");
+      const account = resolveAccountRef(registry, { accountKey: "zh-tech" }).account;
+      const publicX = fakePublicXProvider({ readback: "missing" });
+      const autoPoster = fakeAutoPoster();
+
+      const result = await runOnlineOperationOnce({
+        accountKey: "zh-tech",
+        lockDir: dir,
+        traceId: "trace-prod-v0-readback-missing-1",
+        now: fixedNow(now),
+        enableHeartbeat: false,
+        operation: createProductionOperationExecutor({
+          repo,
+          registry,
+          accountKey: "zh-tech",
+          publicXProvider: publicX,
+          draftGenerator: fakeDraftGenerator(naturalDraftOutput("draft-prod-readback-missing-1")),
+          autoPoster,
+          notificationSender: fakeNotifier(),
+          loadPrompt: () => initialPrompt("zh-tech"),
+          maxQueries: 1,
+          perQueryLimit: 2
+        })
+      });
+
+      expect(result).toMatchObject({
+        outcome: "completed",
+        finalAction: "x_official_auto_post",
+        summary: {
+          final_action_kind: "x_auto_post",
+          tweet_id: "tweet-prod-1",
+          post_readback_status: "not_found"
+        }
+      });
+      expect(publicX.lookups).toEqual(["tweet-prod-1"]);
+      expect(autoPoster.posts).toHaveLength(1);
+      expect(repo.listAiActionsForAccount(account.account_uuid)).toMatchObject([
+        {
+          action_type: "x_official_auto_post",
+          status: "succeeded"
+        }
+      ]);
+      expect(repo.listAuditEventsForAccount(account.account_uuid).map((event) => event.event_type)).toEqual(
+        expect.arrayContaining(["x_official_auto_post_created", "x_post_readback_not_found"])
+      );
+      const memory = buildAccountMemory({ repo, account, capturedAt: now });
+      expect(memory.traceSummaries[0].performance).toMatchObject({
+        readbackStatus: "not_found",
+        tweetId: "tweet-prod-1"
+      });
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("records failed readback without failing the posted action", async () => {
+    const dir = await tempDir();
+    const db = openMigratedTestDb();
+    try {
+      const repo = new RuntimeRepository(db);
+      const registry = registryWithRealPostingEnabled("zh-tech");
+      const account = resolveAccountRef(registry, { accountKey: "zh-tech" }).account;
+      const publicX = fakePublicXProvider({ readback: "failed" });
+      const autoPoster = fakeAutoPoster();
+
+      const result = await runOnlineOperationOnce({
+        accountKey: "zh-tech",
+        lockDir: dir,
+        traceId: "trace-prod-v0-readback-failed-1",
+        now: fixedNow(now),
+        enableHeartbeat: false,
+        operation: createProductionOperationExecutor({
+          repo,
+          registry,
+          accountKey: "zh-tech",
+          publicXProvider: publicX,
+          draftGenerator: fakeDraftGenerator(naturalDraftOutput("draft-prod-readback-failed-1")),
+          autoPoster,
+          notificationSender: fakeNotifier(),
+          loadPrompt: () => initialPrompt("zh-tech"),
+          maxQueries: 1,
+          perQueryLimit: 2
+        })
+      });
+
+      expect(result).toMatchObject({
+        outcome: "completed",
+        finalAction: "x_official_auto_post",
+        summary: {
+          final_action_kind: "x_auto_post",
+          tweet_id: "tweet-prod-1",
+          post_readback_status: "failed"
+        }
+      });
+      expect(publicX.lookups).toEqual(["tweet-prod-1"]);
+      expect(autoPoster.posts).toHaveLength(1);
+      expect(repo.listAiActionsForAccount(account.account_uuid)).toMatchObject([
+        {
+          action_type: "x_official_auto_post",
+          status: "succeeded"
+        }
+      ]);
+      expect(repo.listApiCallAuditForAccount(account.account_uuid).map((audit) => [audit.provider, audit.operation, audit.status].join(":"))).toEqual(
+        expect.arrayContaining(["twitterapi.io:public_x_post_readback:failed"])
+      );
+      expect(repo.listAuditEventsForAccount(account.account_uuid).map((event) => event.event_type)).toEqual(
+        expect.arrayContaining(["x_official_auto_post_created", "x_post_readback_failed"])
+      );
+      expect(repo.listEvidenceRefsForAccount(account.account_uuid).map((ref) => ref.id)).not.toContain("trace-prod-v0-readback-failed-1:post-readback-evidence");
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });
@@ -503,10 +736,15 @@ function registryWithPublicXRequestCap(accountKey: string, monthlyRequestCap: nu
   return parseAccountRegistryConfig(config);
 }
 
-function fakePublicXProvider(): PublicXDataProvider & { calls: PublicXSearchInput[] } {
+function fakePublicXProvider(options: { readback?: "confirmed" | "missing" | "failed" } = {}): PublicXDataProvider & {
+  calls: PublicXSearchInput[];
+  lookups: string[];
+} {
   const calls: PublicXSearchInput[] = [];
+  const lookups: string[] = [];
   return {
     calls,
+    lookups,
     searchPosts: async (input) => {
       calls.push(input);
       const posts = [
@@ -531,14 +769,25 @@ function fakePublicXProvider(): PublicXDataProvider & { calls: PublicXSearchInpu
         posts
       };
     },
-    getPostById: async () => undefined
+    getPostById: async (id) => {
+      lookups.push(id);
+      if (options.readback === "missing") {
+        return undefined;
+      }
+      if (options.readback === "failed") {
+        throw new Error("TwitterAPI.io readback failed");
+      }
+      return publishedPostSnapshot(id, naturalDraftOutput("draft-prod-auto-1").post_text);
+    }
   };
 }
 
-function fakeEmptyPublicXProvider(): PublicXDataProvider & { calls: PublicXSearchInput[] } {
+function fakeEmptyPublicXProvider(): PublicXDataProvider & { calls: PublicXSearchInput[]; lookups: string[] } {
   const calls: PublicXSearchInput[] = [];
+  const lookups: string[] = [];
   return {
     calls,
+    lookups,
     searchPosts: async (input) => {
       calls.push(input);
       return {
@@ -547,7 +796,27 @@ function fakeEmptyPublicXProvider(): PublicXDataProvider & { calls: PublicXSearc
         posts: []
       };
     },
-    getPostById: async () => undefined
+    getPostById: async (id) => {
+      lookups.push(id);
+      return undefined;
+    }
+  };
+}
+
+function publishedPostSnapshot(id: string, text: string): PublicXPostSnapshot {
+  return {
+    id,
+    text,
+    authorHandle: "example_author",
+    authorId: "author-prod-1",
+    createdAt: now,
+    likeCount: 12,
+    repostCount: 3,
+    replyCount: 2,
+    quoteCount: 1,
+    bookmarkCount: 4,
+    viewCount: 1200,
+    url: `https://x.com/example_author/status/${id}`
   };
 }
 

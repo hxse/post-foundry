@@ -195,7 +195,6 @@ function readMonthlyPublicXRequestUnits(repo: RuntimeRepository, accountUuid: st
       const startedAt = Date.parse(row.started_at);
       return (
         row.provider === "twitterapi.io" &&
-        row.operation === "public_x_search" &&
         startedAt >= month.startMs &&
         startedAt < month.endMs
       );

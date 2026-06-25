@@ -19,6 +19,24 @@ export type AccountMemoryOutcomeCounts = {
   draftBlocked: number;
 };
 
+export type AccountMemoryPerformanceMetrics = {
+  likeCount?: number;
+  repostCount?: number;
+  replyCount?: number;
+  quoteCount?: number;
+  bookmarkCount?: number;
+  viewCount?: number;
+};
+
+export type AccountMemoryPerformanceSnapshot = {
+  readbackStatus: "confirmed" | "not_found" | "failed";
+  tweetId?: string;
+  provider?: string;
+  capturedAt?: string;
+  textMatchesCandidate?: boolean;
+  metrics?: AccountMemoryPerformanceMetrics;
+};
+
 export type AccountMemoryTraceSummary = {
   traceId: string;
   startedAt: string;
@@ -45,6 +63,7 @@ export type AccountMemoryTraceSummary = {
     actionType: string;
     status: string;
   };
+  performance?: AccountMemoryPerformanceSnapshot;
   evidenceIds: string[];
 };
 
@@ -195,6 +214,27 @@ const traceSummarySchema = z
         actionId: nonEmptyStringSchema,
         actionType: nonEmptyStringSchema,
         status: nonEmptyStringSchema
+      })
+      .strict()
+      .optional(),
+    performance: z
+      .object({
+        readbackStatus: z.enum(["confirmed", "not_found", "failed"]),
+        tweetId: nonEmptyStringSchema.optional(),
+        provider: nonEmptyStringSchema.optional(),
+        capturedAt: isoDateTimeSchema.optional(),
+        textMatchesCandidate: z.boolean().optional(),
+        metrics: z
+          .object({
+            likeCount: z.number().int().nonnegative().optional(),
+            repostCount: z.number().int().nonnegative().optional(),
+            replyCount: z.number().int().nonnegative().optional(),
+            quoteCount: z.number().int().nonnegative().optional(),
+            bookmarkCount: z.number().int().nonnegative().optional(),
+            viewCount: z.number().int().nonnegative().optional()
+          })
+          .strict()
+          .optional()
       })
       .strict()
       .optional(),
@@ -531,19 +571,61 @@ function collectActionMemory(trace: MutableTraceSummary, action: StoredAiAction)
 }
 
 function collectEventMemory(trace: MutableTraceSummary, event: StoredAuditEvent): void {
-  if (event.event_type !== "topic_selected") {
+  const metadata = asRecord(parseJson(event.metadata_json));
+  if (event.event_type === "topic_selected") {
+    const id = stringValue(metadata.selected_topic_id);
+    const label = stringValue(metadata.selected_topic_label);
+    if (id && label && !trace.selectedTopic) {
+      trace.selectedTopic = {
+        id,
+        label,
+        keywords: []
+      };
+    }
     return;
   }
-  const metadata = asRecord(parseJson(event.metadata_json));
-  const id = stringValue(metadata.selected_topic_id);
-  const label = stringValue(metadata.selected_topic_label);
-  if (id && label && !trace.selectedTopic) {
-    trace.selectedTopic = {
-      id,
-      label,
-      keywords: []
-    };
+
+  const performance = readReadbackPerformance(event.event_type, metadata, event.occurred_at, event.actor_id);
+  if (performance) {
+    trace.performance = performance;
   }
+}
+
+function readReadbackPerformance(
+  eventType: string,
+  metadata: Record<string, unknown>,
+  occurredAt: string,
+  actorId: string
+): AccountMemoryPerformanceSnapshot | undefined {
+  if (eventType !== "x_post_readback_confirmed" && eventType !== "x_post_readback_not_found" && eventType !== "x_post_readback_failed") {
+    return undefined;
+  }
+  const metrics = asRecord(metadata.metrics);
+  return {
+    readbackStatus: readbackStatusFromEventType(eventType),
+    tweetId: stringValue(metadata.tweet_id),
+    provider: actorId,
+    capturedAt: occurredAt,
+    textMatchesCandidate: booleanValue(metadata.text_matches_candidate),
+    metrics: {
+      likeCount: nonNegativeIntegerValue(metrics.likeCount),
+      repostCount: nonNegativeIntegerValue(metrics.repostCount),
+      replyCount: nonNegativeIntegerValue(metrics.replyCount),
+      quoteCount: nonNegativeIntegerValue(metrics.quoteCount),
+      bookmarkCount: nonNegativeIntegerValue(metrics.bookmarkCount),
+      viewCount: nonNegativeIntegerValue(metrics.viewCount)
+    }
+  };
+}
+
+function readbackStatusFromEventType(eventType: string): AccountMemoryPerformanceSnapshot["readbackStatus"] {
+  if (eventType === "x_post_readback_confirmed") {
+    return "confirmed";
+  }
+  if (eventType === "x_post_readback_failed") {
+    return "failed";
+  }
+  return "not_found";
 }
 
 function ensureTrace(traces: Map<string, MutableTraceSummary>, traceId: string, startedAt: string): MutableTraceSummary {
@@ -728,6 +810,9 @@ function buildNextRunHints(traces: AccountMemoryTraceSummary[]): string[] {
   if (outcomeCounts.autoPost > 0) {
     hints.push("short no-link posts can continue through the automatic branch when policy passes");
   }
+  if (traces.some((trace) => trace.performance?.readbackStatus === "confirmed")) {
+    hints.push("compare confirmed post metrics before repeating topic formats");
+  }
   return hints.length > 0 ? hints : ["collect more ledger history before changing account strategy"];
 }
 
@@ -746,6 +831,9 @@ function buildLessons(memory: AccountMemorySnapshot): string[] {
   if (memory.outcomeCounts.autoPost > 0) {
     lessons.push("at least one short no-link candidate reached the automatic branch offline");
   }
+  if (memory.traceSummaries.some((trace) => trace.performance?.readbackStatus === "confirmed")) {
+    lessons.push("published post readbacks can guide future topic and style choices");
+  }
   return lessons.length > 0 ? lessons : ["memory has too little history for strong account lessons"];
 }
 
@@ -758,6 +846,7 @@ function stripMutableTrace(trace: MutableTraceSummary): AccountMemoryTraceSummar
     draft: trace.draft,
     policy: trace.policy,
     finalAction: trace.finalAction,
+    performance: trace.performance,
     evidenceIds: trace.evidenceIds
   };
 }
@@ -786,6 +875,12 @@ function sanitizeMemory(memory: AccountMemorySnapshot): AccountMemorySnapshot {
         ? {
             ...trace.policy,
             reasonCodes: trace.policy.reasonCodes ?? []
+          }
+        : undefined,
+      performance: trace.performance
+        ? {
+            ...trace.performance,
+            metrics: trace.performance.metrics ?? {}
           }
         : undefined
     }))
@@ -830,6 +925,7 @@ function parseOutcomeValue(value: unknown): z.infer<typeof outcomeSchema> | unde
 
 function isFinalActionType(actionType: string): boolean {
   return [
+    "x_official_auto_post",
     "x_official_auto_post_planned",
     "telegram_notification_sent",
     "telegram_notification_failed",
@@ -865,6 +961,14 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function booleanValue(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function nonNegativeIntegerValue(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : undefined;
 }
 
 function stringArray(value: unknown): string[] {

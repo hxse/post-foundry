@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import { createAccountConfigSnapshot, resolveAccountRef, type AccountConfigSnapshot, type AccountRegistry } from "../accounts/registry";
+import { createAccountConfigSnapshot, resolveAccountRef, type AccountConfig, type AccountConfigSnapshot, type AccountRegistry } from "../accounts/registry";
 import type { AccountInitialPrompt } from "../accounts/account-prompt";
 import { ApiError } from "../api/errors";
 import { collectAccountPublicXSourceBatch, type PublicXSourceCollectionResult } from "../context/source-collection";
@@ -23,7 +23,7 @@ import { buildAccountMemory, type AccountMemorySnapshot } from "../memory/accoun
 import { deliverManualNotification, type ManualNotificationDeliveryResult, type TelegramNotificationSender } from "../notifications/manual-notification";
 import { evaluateAutomationPolicy, type AutomationPolicyContext, type AutomationPolicyDecision, type PostingCandidate } from "../policy/automation";
 import type { ProductionDraftGenerationResult, ProductionDraftGenerator } from "../llm/production-draft-generator";
-import type { PublicXDataProvider } from "../providers/public-x";
+import type { PublicXDataProvider, PublicXPostSnapshot } from "../providers/public-x";
 import type { XPostInput, XPostOutput } from "../providers/x-official-publisher";
 import type { RuntimeRepository, StoredAiAction, StoredAiDecision, StoredAiRun } from "../storage/repositories";
 import { buildTopicRadar, recordTopicRadarSelection, type TopicRadarPackage } from "../topics/topic-radar";
@@ -53,8 +53,41 @@ export type ProductionOperationExecutorInput = {
   memoryTraceLimit?: number;
 };
 
+export type PublicXEngagementMetrics = {
+  likeCount?: number;
+  repostCount?: number;
+  replyCount?: number;
+  quoteCount?: number;
+  bookmarkCount?: number;
+  viewCount?: number;
+};
+
+export type ProductionPostReadbackResult =
+  | {
+      status: "confirmed";
+      tweetId: string;
+      apiAuditId: string;
+      evidenceRefId: string;
+      auditEventId: string;
+      metrics: PublicXEngagementMetrics;
+      textMatchesCandidate: boolean;
+    }
+  | {
+      status: "not_found";
+      tweetId: string;
+      apiAuditId: string;
+      auditEventId: string;
+    }
+  | {
+      status: "failed";
+      tweetId: string;
+      apiAuditId: string;
+      auditEventId: string;
+      error: string;
+    };
+
 export type ProductionOperationFinalAction =
-  | { kind: "x_auto_post"; actionId: string; tweetId: string }
+  | { kind: "x_auto_post"; actionId: string; tweetId: string; readback: ProductionPostReadbackResult }
   | { kind: "telegram_notification"; actionId: string; delivery: ManualNotificationDeliveryResult }
   | { kind: "policy_terminal"; actionId: string; outcome: "reject" | "defer" }
   | { kind: "draft_blocked"; actionId: string };
@@ -227,15 +260,15 @@ async function runProductionOperation(
     });
   }
 
-  const policyContext = buildProductionPolicyContext({
+  const basePolicyContext = buildProductionPolicyContext({
     repo: input.repo,
     accountUuid: account.account_uuid,
     evaluatedAt: context.startedAt
   });
-  const policyDecision = evaluateAutomationPolicy({
+  const { policyContext, policyDecision } = evaluateProductionPolicyWithReadbackReservation({
     account,
     candidate: draftGate.candidate,
-    context: policyContext
+    baseContext: basePolicyContext
   });
   recordPolicyEvaluation({
     repo: input.repo,
@@ -256,9 +289,13 @@ async function runProductionOperation(
     candidate: draftGate.candidate,
     autoPoster: input.autoPoster,
     notificationSender: input.notificationSender,
+    publicXProvider: input.publicXProvider,
     policyDecisionId: ids.policyDecisionId,
     actionId: ids.finalActionId,
     auditEventId: ids.finalActionAuditEventId,
+    readbackApiAuditId: ids.postReadbackApiAuditId,
+    readbackEvidenceRefId: ids.postReadbackEvidenceRefId,
+    readbackAuditEventId: ids.postReadbackAuditEventId,
     traceId: context.traceId,
     now: context.startedAt
   });
@@ -419,18 +456,23 @@ async function executeProductionFinalAction(input: {
   candidate: PostingCandidate;
   autoPoster: ProductionAutoPoster;
   notificationSender: TelegramNotificationSender;
+  publicXProvider: PublicXDataProvider;
   policyDecisionId: string;
   actionId: string;
   auditEventId: string;
+  readbackApiAuditId: string;
+  readbackEvidenceRefId: string;
+  readbackAuditEventId: string;
   traceId: string;
   now: string;
 }): Promise<ProductionOperationFinalAction> {
   if (input.decision.outcome === "auto_post") {
-    const posted = await createXPostWithLedger(input);
+    const { posted, readback } = await createXPostWithLedger(input);
     return {
       kind: "x_auto_post",
       actionId: input.actionId,
-      tweetId: posted.tweetId
+      tweetId: posted.tweetId,
+      readback
     };
   }
 
@@ -466,12 +508,16 @@ async function createXPostWithLedger(input: {
   decision: AutomationPolicyDecision;
   candidate: PostingCandidate;
   autoPoster: ProductionAutoPoster;
+  publicXProvider: PublicXDataProvider;
   policyDecisionId: string;
   actionId: string;
   auditEventId: string;
+  readbackApiAuditId: string;
+  readbackEvidenceRefId: string;
+  readbackAuditEventId: string;
   traceId: string;
   now: string;
-}): Promise<Extract<XPostOutput, { status: "posted" }>> {
+}): Promise<{ posted: Extract<XPostOutput, { status: "posted" }>; readback: ProductionPostReadbackResult }> {
   try {
     const result = await input.autoPoster.createPost({
       accountKey: input.decision.accountKey,
@@ -519,7 +565,21 @@ async function createXPostWithLedger(input: {
         }
       });
     });
-    return result;
+    const readback = await readBackPublishedPost({
+      repo: input.repo,
+      provider: input.publicXProvider,
+      accountUuid: input.decision.accountUuid,
+      policyDecisionId: input.policyDecisionId,
+      actionId: input.actionId,
+      apiAuditId: input.readbackApiAuditId,
+      evidenceRefId: input.readbackEvidenceRefId,
+      auditEventId: input.readbackAuditEventId,
+      traceId: input.traceId,
+      now: input.now,
+      tweetId: result.tweetId,
+      candidateText: input.candidate.text
+    });
+    return { posted: result, readback };
   } catch (error) {
     recordXPostFailedAction({
       ...input,
@@ -527,6 +587,190 @@ async function createXPostWithLedger(input: {
     });
     throw error;
   }
+}
+
+async function readBackPublishedPost(input: {
+  repo: RuntimeRepository;
+  provider: PublicXDataProvider;
+  accountUuid: string;
+  policyDecisionId: string;
+  actionId: string;
+  apiAuditId: string;
+  evidenceRefId: string;
+  auditEventId: string;
+  traceId: string;
+  now: string;
+  tweetId: string;
+  candidateText: string;
+}): Promise<ProductionPostReadbackResult> {
+  try {
+    const snapshot = await input.provider.getPostById(input.tweetId);
+    if (!snapshot) {
+      input.repo.transaction(() => {
+        input.repo.recordApiCallAudit({
+          id: input.apiAuditId,
+          accountUuid: input.accountUuid,
+          provider: "twitterapi.io",
+          operation: "public_x_post_readback",
+          status: "succeeded",
+          requestUnits: 1,
+          startedAt: input.now,
+          finishedAt: input.now,
+          metadata: {
+            tweet_id: input.tweetId,
+            readback_status: "not_found"
+          }
+        });
+        input.repo.recordAuditEvent({
+          id: input.auditEventId,
+          accountUuid: input.accountUuid,
+          eventType: "x_post_readback_not_found",
+          subjectType: "ai_action",
+          subjectId: input.actionId,
+          actorType: "provider",
+          actorId: "twitterapi.io",
+          traceId: input.traceId,
+          occurredAt: input.now,
+          metadata: {
+            tweet_id: input.tweetId,
+            policy_decision_id: input.policyDecisionId,
+            readback_status: "not_found"
+          }
+        });
+      });
+      return {
+        status: "not_found",
+        tweetId: input.tweetId,
+        apiAuditId: input.apiAuditId,
+        auditEventId: input.auditEventId
+      };
+    }
+
+    const metrics = metricsFromPublicXSnapshot(snapshot);
+    const textSha256 = sha256(snapshot.text);
+    const expectedTextSha256 = sha256(input.candidateText);
+    const textMatchesCandidate = textSha256 === expectedTextSha256;
+    input.repo.transaction(() => {
+      input.repo.recordApiCallAudit({
+        id: input.apiAuditId,
+        accountUuid: input.accountUuid,
+        provider: "twitterapi.io",
+        operation: "public_x_post_readback",
+        status: "succeeded",
+        requestUnits: 1,
+        startedAt: input.now,
+        finishedAt: input.now,
+        metadata: {
+          tweet_id: input.tweetId,
+          readback_status: "confirmed",
+          text_matches_candidate: textMatchesCandidate
+        }
+      });
+      input.repo.recordEvidenceRef({
+        id: input.evidenceRefId,
+        accountUuid: input.accountUuid,
+        decisionId: input.policyDecisionId,
+        sourceType: "public_x_post",
+        provider: "twitterapi.io",
+        sourceRef: `tweet:${snapshot.id}`,
+        sourceUrl: snapshot.url,
+        title: `Published X post ${snapshot.id}`,
+        capturedAt: input.now,
+        metadata: {
+          tweet_id: snapshot.id,
+          author_handle: snapshot.authorHandle,
+          author_id: snapshot.authorId,
+          created_at: snapshot.createdAt,
+          text_sha256: textSha256,
+          expected_text_sha256: expectedTextSha256,
+          text_matches_candidate: textMatchesCandidate,
+          metrics
+        }
+      });
+      input.repo.recordAuditEvent({
+        id: input.auditEventId,
+        accountUuid: input.accountUuid,
+        eventType: "x_post_readback_confirmed",
+        subjectType: "ai_action",
+        subjectId: input.actionId,
+        actorType: "provider",
+        actorId: "twitterapi.io",
+        traceId: input.traceId,
+        occurredAt: input.now,
+        metadata: {
+          tweet_id: snapshot.id,
+          policy_decision_id: input.policyDecisionId,
+          evidence_ref_id: input.evidenceRefId,
+          readback_status: "confirmed",
+          text_matches_candidate: textMatchesCandidate,
+          metrics
+        }
+      });
+    });
+    return {
+      status: "confirmed",
+      tweetId: snapshot.id,
+      apiAuditId: input.apiAuditId,
+      evidenceRefId: input.evidenceRefId,
+      auditEventId: input.auditEventId,
+      metrics,
+      textMatchesCandidate
+    };
+  } catch (error) {
+    const message = errorMessage(error);
+    input.repo.transaction(() => {
+      input.repo.recordApiCallAudit({
+        id: input.apiAuditId,
+        accountUuid: input.accountUuid,
+        provider: "twitterapi.io",
+        operation: "public_x_post_readback",
+        status: "failed",
+        requestUnits: 1,
+        startedAt: input.now,
+        finishedAt: input.now,
+        metadata: {
+          tweet_id: input.tweetId,
+          readback_status: "failed",
+          error: message
+        }
+      });
+      input.repo.recordAuditEvent({
+        id: input.auditEventId,
+        accountUuid: input.accountUuid,
+        eventType: "x_post_readback_failed",
+        subjectType: "ai_action",
+        subjectId: input.actionId,
+        actorType: "provider",
+        actorId: "twitterapi.io",
+        traceId: input.traceId,
+        occurredAt: input.now,
+        metadata: {
+          tweet_id: input.tweetId,
+          policy_decision_id: input.policyDecisionId,
+          readback_status: "failed",
+          error: message
+        }
+      });
+    });
+    return {
+      status: "failed",
+      tweetId: input.tweetId,
+      apiAuditId: input.apiAuditId,
+      auditEventId: input.auditEventId,
+      error: message
+    };
+  }
+}
+
+function metricsFromPublicXSnapshot(snapshot: PublicXPostSnapshot): PublicXEngagementMetrics {
+  return {
+    likeCount: snapshot.likeCount,
+    repostCount: snapshot.repostCount,
+    replyCount: snapshot.replyCount,
+    quoteCount: snapshot.quoteCount,
+    bookmarkCount: snapshot.bookmarkCount,
+    viewCount: snapshot.viewCount
+  };
 }
 
 function recordPolicyEvaluation(input: {
@@ -743,6 +987,37 @@ function recordXPostFailedAction(input: {
   });
 }
 
+function evaluateProductionPolicyWithReadbackReservation(input: {
+  account: AccountConfig;
+  candidate: PostingCandidate;
+  baseContext: AutomationPolicyContext;
+}): { policyContext: AutomationPolicyContext; policyDecision: AutomationPolicyDecision } {
+  const firstDecision = evaluateAutomationPolicy({
+    account: input.account,
+    candidate: input.candidate,
+    context: input.baseContext
+  });
+  if (firstDecision.outcome !== "auto_post") {
+    return {
+      policyContext: input.baseContext,
+      policyDecision: firstDecision
+    };
+  }
+
+  const reservedContext: AutomationPolicyContext = {
+    ...input.baseContext,
+    estimatedPublicXRequests: input.baseContext.estimatedPublicXRequests + 1
+  };
+  return {
+    policyContext: reservedContext,
+    policyDecision: evaluateAutomationPolicy({
+      account: input.account,
+      candidate: input.candidate,
+      context: reservedContext
+    })
+  };
+}
+
 function buildProductionPolicyContext(input: {
   repo: RuntimeRepository;
   accountUuid: string;
@@ -762,7 +1037,7 @@ function buildProductionPolicyContext(input: {
     postedTodayCount: postedToday.length,
     lastPostedAt,
     publicXRequestsThisMonth: monthly
-      .filter((audit) => audit.provider === "twitterapi.io" && audit.operation === "public_x_search")
+      .filter((audit) => audit.provider === "twitterapi.io")
       .reduce((sum, audit) => sum + audit.request_units, 0),
     estimatedPublicXRequests: 0
   };
@@ -839,6 +1114,15 @@ function summarizeCompleted(input: {
       policy_route: input.policyDecision?.route,
       final_action_kind: input.finalAction.kind,
       tweet_id: input.finalAction.kind === "x_auto_post" ? input.finalAction.tweetId : undefined,
+      post_readback_status: input.finalAction.kind === "x_auto_post" ? input.finalAction.readback.status : undefined,
+      post_readback_text_matches_candidate:
+        input.finalAction.kind === "x_auto_post" && input.finalAction.readback.status === "confirmed"
+          ? input.finalAction.readback.textMatchesCandidate
+          : undefined,
+      post_readback_like_count:
+        input.finalAction.kind === "x_auto_post" && input.finalAction.readback.status === "confirmed" ? input.finalAction.readback.metrics.likeCount : undefined,
+      post_readback_view_count:
+        input.finalAction.kind === "x_auto_post" && input.finalAction.readback.status === "confirmed" ? input.finalAction.readback.metrics.viewCount : undefined,
       telegram_delivery_status: input.finalAction.kind === "telegram_notification" ? input.finalAction.delivery.status : undefined,
       config_snapshot_id: input.configSnapshotId
     }
@@ -902,7 +1186,10 @@ function idsFor(traceId: string) {
     policyDecisionId: `${traceId}:policy-decision`,
     policyAuditEventId: `${traceId}:policy-event`,
     finalActionId: `${traceId}:final-action`,
-    finalActionAuditEventId: `${traceId}:final-action-event`
+    finalActionAuditEventId: `${traceId}:final-action-event`,
+    postReadbackApiAuditId: `${traceId}:post-readback-api-audit`,
+    postReadbackEvidenceRefId: `${traceId}:post-readback-evidence`,
+    postReadbackAuditEventId: `${traceId}:post-readback-event`
   };
 }
 

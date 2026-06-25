@@ -1,4 +1,3 @@
-import { resolve } from "node:path";
 import {
   defaultOnlineLoopIntervalSeconds,
   defaultOnlineLoopJitterSeconds,
@@ -8,10 +7,9 @@ import {
 } from "./online-runner";
 
 export type ProductionSourceCollectionArgs = {
-  configFile: string;
   secretsFile?: string;
   dbFile?: string;
-  sourceMaxQueries: number;
+  sourceMaxRequests: number;
   sourcePerQueryLimit: number;
 };
 
@@ -30,7 +28,6 @@ export type ProductionOnlineRunLoopArgs = ProductionOnlineRunOnceArgs & {
   maxIterations?: number;
 };
 
-const exampleConfigFile = "config/accounts.example.json";
 
 export function parseProductionOnlineRunOnceArgs(argv: string[]): ProductionOnlineRunOnceArgs {
   const args: Partial<ProductionOnlineRunOnceArgs> = defaultProductionArgs();
@@ -71,7 +68,7 @@ export function parseProductionOnlineRunLoopArgs(argv: string[]): ProductionOnli
 
 function defaultProductionArgs(): Partial<ProductionOnlineRunOnceArgs> {
   return {
-    sourceMaxQueries: 3,
+    sourceMaxRequests: 10,
     sourcePerQueryLimit: 5,
     lockTtlSeconds: defaultOnlineOperationLockTtlSeconds,
     lockPollIntervalMs: defaultOnlineOperationLockPollIntervalMs
@@ -90,10 +87,6 @@ function parseCommonArg(argv: string[], index: number, args: Partial<ProductionO
     args.account = readValue(argv, index + 1, "--account");
     return index + 1;
   }
-  if (arg === "--config-file") {
-    args.configFile = readValue(argv, index + 1, "--config-file");
-    return index + 1;
-  }
   if (arg === "--secrets-file") {
     args.secretsFile = readValue(argv, index + 1, "--secrets-file");
     return index + 1;
@@ -102,8 +95,8 @@ function parseCommonArg(argv: string[], index: number, args: Partial<ProductionO
     args.dbFile = readValue(argv, index + 1, "--db-file");
     return index + 1;
   }
-  if (arg === "--source-max-queries") {
-    args.sourceMaxQueries = readBoundedPositiveInteger(argv, index + 1, "--source-max-queries", 10);
+  if (arg === "--source-max-requests") {
+    args.sourceMaxRequests = readBoundedPositiveInteger(argv, index + 1, "--source-max-requests", 10);
     return index + 1;
   }
   if (arg === "--source-per-query-limit") {
@@ -133,18 +126,11 @@ function finalizeRunOnceArgs(args: Partial<ProductionOnlineRunOnceArgs>): Produc
   if (!args.account) {
     throw new Error("--account is required");
   }
-  if (!args.configFile) {
-    throw new Error("--config-file is required for production online runs");
-  }
-  if (isExampleConfigFile(args.configFile)) {
-    throw new Error("--config-file must not be config/accounts.example.json for production online runs");
-  }
   return {
     account: args.account,
-    configFile: args.configFile,
     secretsFile: args.secretsFile,
     dbFile: args.dbFile,
-    sourceMaxQueries: args.sourceMaxQueries ?? 3,
+    sourceMaxRequests: args.sourceMaxRequests ?? 10,
     sourcePerQueryLimit: args.sourcePerQueryLimit ?? 5,
     lockDir: args.lockDir,
     lockTtlSeconds: args.lockTtlSeconds ?? defaultOnlineOperationLockTtlSeconds,
@@ -153,9 +139,6 @@ function finalizeRunOnceArgs(args: Partial<ProductionOnlineRunOnceArgs>): Produc
   };
 }
 
-function isExampleConfigFile(value: string): boolean {
-  return resolve(value) === resolve(exampleConfigFile);
-}
 
 function readValue(argv: string[], index: number, flag: string): string {
   const value = argv[index];

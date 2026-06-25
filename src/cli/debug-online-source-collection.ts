@@ -1,29 +1,32 @@
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { ApiError, isApiError } from "../lib/api/errors";
 import type { FetchLike } from "../lib/api/http";
 import { redactSecrets, tokenFingerprint } from "../lib/api/redaction";
 import { resolveAccountCredentials } from "../lib/api/secrets";
-import { createAccountConfigSnapshot, parseAccountRegistryConfig, resolveAccountRef } from "../lib/accounts/registry";
+import { loadAccountInitialPrompt } from "../lib/accounts/account-prompt";
+import { createAccountConfigSnapshot, loadAccountRegistryFromSecretsFile, resolveAccountRef } from "../lib/accounts/registry";
 import { parseDebugOnlineSourceCollectionArgs } from "../lib/context/source-collection-debug-args";
 import { collectAccountPublicXSourceBatch } from "../lib/context/source-collection";
+import { derivePublicXSearchQueriesFromPrompt } from "../lib/context/source-queries";
 import { TwitterApiIoPublicXAdapter } from "../lib/providers/twitterapi-io";
 import { RuntimeRepository } from "../lib/storage/repositories";
 import { openRuntimeDatabase } from "../lib/storage/sqlite";
 
 async function main(): Promise<void> {
   const args = parseDebugOnlineSourceCollectionArgs(process.argv.slice(2));
-  const registry = parseAccountRegistryConfig(JSON.parse(await readFile(args.configFile, "utf8")) as unknown);
+  const registry = await loadAccountRegistryFromSecretsFile({ secretsPath: args.secretsFile });
   const resolution = resolveAccountRef(registry, { accountKey: args.account });
   const account = resolution.account;
+  const prompt = await loadAccountInitialPrompt({ accountKey: args.account, secretsPath: args.secretsFile });
+  const sourceQueries = derivePublicXSearchQueriesFromPrompt(prompt);
 
   console.log("source collection online debug");
   console.log(`account=${account.account_key}`);
-  console.log(`config_file=${args.configFile}`);
+  console.log(`secrets_file=${args.secretsFile ?? "default"}`);
   console.log(`provider=${account.data_sources.public_x.provider}`);
   console.log(`public_x_enabled=${String(account.data_sources.public_x.enabled)}`);
-  console.log(`configured_keywords=${account.data_sources.public_x.search_keywords.length}`);
-  console.log(`max_queries=${args.maxQueries}`);
+  console.log(`derived_source_queries=${sourceQueries.length}`);
+  console.log(`max_requests=${args.maxRequests}`);
   console.log(`per_query_limit=${args.perQueryLimit}`);
 
   if (!args.collect) {
@@ -68,7 +71,8 @@ async function main(): Promise<void> {
       auditEventId,
       configSnapshotId,
       collectedAt: now,
-      maxQueries: args.maxQueries,
+      sourceQueries,
+      maxQueries: args.maxRequests,
       perQueryLimit: args.perQueryLimit
     });
 

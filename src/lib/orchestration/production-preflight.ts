@@ -1,7 +1,8 @@
 import { resolveAccountRef, type AccountRegistry } from "../accounts/registry";
 import type { AccountInitialPrompt } from "../accounts/account-prompt";
 import { ApiError, isApiError, type ApiErrorCode } from "../api/errors";
-import { isPlaceholderSecretValue, type AccountCredentials, type CredentialEnv, type OpenAiCredentials, type TelegramNotificationCredentials } from "../api/secrets";
+import { derivePublicXSearchQueriesFromPrompt } from "../context/source-queries";
+import { isPlaceholderSecretValue, type AccountCredentials, type OpenAiCredentials, type TelegramNotificationCredentials } from "../api/secrets";
 
 export type ProductionLocalPreflightInput = {
   registry: AccountRegistry;
@@ -10,7 +11,6 @@ export type ProductionLocalPreflightInput = {
   openAiCredentials: OpenAiCredentials;
   telegramCredentials: TelegramNotificationCredentials;
   loadPrompt: () => Promise<AccountInitialPrompt> | AccountInitialPrompt;
-  env?: CredentialEnv;
 };
 
 export type ProductionLocalPreflightResult = {
@@ -58,16 +58,10 @@ export async function runProductionLocalPreflight(input: ProductionLocalPrefligh
     detail: "public X source collection must be enabled"
   });
   addCheck(checks, failures, {
-    key: "public_x_keywords",
-    passed: account.data_sources.public_x.search_keywords.length > 0,
+    key: "public_x_max_requests_per_run",
+    passed: account.data_sources.public_x.max_requests_per_run > 0,
     kind: "invalid_request",
-    detail: "public X search keywords must be configured"
-  });
-  addCheck(checks, failures, {
-    key: "public_x_monthly_request_cap",
-    passed: account.data_sources.public_x.monthly_request_cap > 0,
-    kind: "invalid_request",
-    detail: "public X monthly request cap must be greater than 0"
+    detail: "public X max_requests_per_run must be greater than 0"
   });
   addCheck(checks, failures, {
     key: "real_posting_enabled",
@@ -105,12 +99,6 @@ export async function runProductionLocalPreflight(input: ProductionLocalPrefligh
     kind: "missing_credentials",
     detail: "Telegram notification channel is required because policy may choose human review"
   });
-  addCheck(checks, failures, {
-    key: "real_x_post_env_guard",
-    passed: input.env?.POST_FOUNDRY_ALLOW_REAL_X_POST === "1",
-    kind: "missing_credentials",
-    detail: "POST_FOUNDRY_ALLOW_REAL_X_POST must be 1 so auto-post can execute when policy allows it"
-  });
 
   if (failures.length > 0) {
     throw preflightError(failures);
@@ -127,6 +115,13 @@ export async function runProductionLocalPreflight(input: ProductionLocalPrefligh
     passed: prompt.accountKey === input.accountKey && isUsable(prompt.prompt) && /^[a-f0-9]{64}$/.test(prompt.promptSha256),
     kind: "missing_credentials",
     detail: "account initial prompt must load from local secrets and expose a sha256 hash"
+  });
+  const sourceQueries = derivePublicXSearchQueriesFromPrompt(prompt);
+  addCheck(checks, failures, {
+    key: "public_x_source_queries",
+    passed: sourceQueries.length > 0,
+    kind: "invalid_request",
+    detail: "account initial prompt must yield at least one public X source query"
   });
 
   if (failures.length > 0) {

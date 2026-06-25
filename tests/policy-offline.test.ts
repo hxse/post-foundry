@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import accountsExample from "../config/accounts.example.json";
+import accountsExample from "./fixtures/accounts";
 import { parseAccountRegistryConfig, resolveAccountRef, type AccountConfig } from "../src/lib/accounts/registry";
 import { evaluateAutomationPolicy, recordAutomationPolicyDecision } from "../src/lib/policy/automation";
 import { RuntimeRepository } from "../src/lib/storage/repositories";
@@ -134,24 +134,8 @@ describe("automation policy engine", () => {
         postedTodayCount: account.posting.daily_max
       }
     });
-    const requestCap = evaluateAutomationPolicy({
-      account,
-      candidate: {
-        id: "candidate-defer-2",
-        text: "AI 请求上限也是运行节奏的一部分。",
-        topicTags: ["AI"]
-      },
-      context: {
-        ...baseContext(),
-        publicXRequestsThisMonth: account.data_sources.public_x.monthly_request_cap,
-        estimatedPublicXRequests: 1
-      }
-    });
-
     expect(dailyMax.outcome).toBe("defer");
     expect(dailyMax.reasons.map((reason) => reason.code)).toContain("daily_max_reached");
-    expect(requestCap.outcome).toBe("defer");
-    expect(requestCap.reasons.map((reason) => reason.code)).toContain("public_x_request_cap_exceeded");
   });
 
   it("records policy decisions into the audit ledger by account_uuid", () => {
@@ -312,9 +296,7 @@ function baseContext() {
   return {
     evaluatedAt: now,
     postedTodayCount: 0,
-    lastPostedAt: "2026-06-22T22:00:00.000Z",
-    publicXRequestsThisMonth: 10,
-    estimatedPublicXRequests: 0
+    lastPostedAt: "2026-06-22T22:00:00.000Z"
   };
 }
 

@@ -8,7 +8,7 @@ PostFoundry 的最终目标是让 Codex 中的 AI 成为少量自有 X 账号的
 
 后续任务如果在“工程基础设施”和“运营闭环”之间取舍，应优先服务这个闭环：
 
-* 发现公开热点和高质量资料。
+* 发现公开热点和高质量资料，包括 X 公开数据、Hacker News、项目官网、论文/文档、公司博客、主流科技媒体和市场公开信息。
 * 按账号定位筛选、排序和去重。
 * 生成符合账号风格的自然草稿。
 * 在安全边界内排程和发帖。
@@ -29,6 +29,14 @@ PostFoundry 的 X 边界固定为：
 * OAuth 首次授权如果需要浏览器登录，只能由用户在自己的浏览器中手动完成；agent 只允许生成 / 打印授权 URL 和监听本地 callback，不得代开、代登、截图或读取页面。
 
 如果第三方公开数据 API 暂时未索引新内容，应记录为 provider 延迟或未覆盖风险；不得退回浏览器访问 `x.com`。
+
+非 X 网页资料可以作为研究和核验来源，例如 Hacker News、项目官网、论文/文档、公司博客、主流科技媒体和市场公开信息。这个例外不改变 X 边界：任何 X 数据读取仍然必须走 X 官方 API 或第三方公开数据 API，不得打开 `x.com`。
+
+## Codex Runtime Boundary
+
+PostFoundry production drafting is intended to use the Codex CLI runtime available in the current environment, not an OpenAI API-key draft service. In Podman or other containers, the only supported auth setup is logging in inside that container with `just local-codex-login`, which runs `codex login --device-auth`. Do not document or implement copying host `~/.codex/auth.json`, bind-mounting the host `.codex` directory, or using OpenAI API-key auth as the supported path for this project.
+
+Use `just local-codex-version` and `just local-codex-status` for local checks. `just debug-online-codex-smoke` performs a real Codex model call and is manual-only.
 
 ## Online And Cost-Bearing Runs
 

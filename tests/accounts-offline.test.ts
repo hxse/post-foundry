@@ -1,8 +1,13 @@
+import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../src/lib/api/errors";
-import accountsExample from "../config/accounts.example.json";
+import accountsExample from "./fixtures/accounts";
 import {
+  buildAccountRegistryFromSecrets,
   createAccountConfigSnapshot,
+  deriveAccountUuidFromAccountKey,
   parseAccountRegistryConfig,
   renameAccountKey,
   resolveAccountRef
@@ -14,7 +19,7 @@ describe("account registry and config isolation", () => {
     const zh = resolveAccountRef(registry, { accountKey: "zh-tech" });
 
     expect(zh.account.account_uuid).toBe("018f8a6d-7f31-7b0a-a8b2-1c0adca0e001");
-    expect(zh.account.data_sources.public_x.monthly_request_cap).toBe(1000);
+    expect(zh.account.data_sources.public_x.max_requests_per_run).toBe(10);
     expect(zh.account.data_sources.public_x.provider).toBe("twitterapi.io");
     expect(zh.xIdentity?.oauth_token_status).toBe("missing");
 
@@ -113,7 +118,7 @@ describe("account registry and config isolation", () => {
                 ...account.data_sources,
                 public_x: {
                   ...account.data_sources.public_x,
-                  monthly_request_cap: account.data_sources.public_x.monthly_request_cap + 1
+                  max_requests_per_run: account.data_sources.public_x.max_requests_per_run + 1
                 }
               }
             }
@@ -195,6 +200,52 @@ describe("account registry and config isolation", () => {
       "invalid_request"
     );
   });
+  it("builds the internal registry from secrets profile without user-supplied UUID", async () => {
+    const root = await mkdtemp(join(tmpdir(), "post-foundry-account-profile-"));
+    try {
+      await mkdir(join(root, "secrets", "profiles"), { recursive: true });
+      await writeFile(
+        join(root, "secrets", "profiles", "zh-tech.json"),
+        JSON.stringify({
+          posting: {
+            cadence_hours: 6,
+            daily_min: 3,
+            daily_max: 4,
+            cooldown_minutes: 90,
+            require_approval: false,
+            real_posting_enabled: false
+          },
+          source: {
+            max_requests_per_run: 2
+          }
+        }),
+        "utf8"
+      );
+
+      const registry = await buildAccountRegistryFromSecrets({
+        cwd: root,
+        secrets: {
+          version: 1,
+          accounts: {
+            "zh-tech": {
+              profile_path: "secrets/profiles/zh-tech.json",
+              initial_prompt_path: "secrets/prompts/zh-tech.md"
+            }
+          }
+        }
+      });
+      const account = resolveAccountRef(registry, { accountKey: "zh-tech" }).account;
+
+      expect(account.account_uuid).toBe(deriveAccountUuidFromAccountKey("zh-tech"));
+      expect(account.account_key).toBe("zh-tech");
+      expect(account.data_sources.public_x.max_requests_per_run).toBe(2);
+      expect(account.topics.include).toEqual([]);
+      expect(account.style.banned_phrases).toEqual(["smoke test", "PostFoundry"]);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
 });
 
 function expectLocalError(fn: () => unknown, code: "invalid_request" | "missing_credentials"): void {

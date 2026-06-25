@@ -33,11 +33,9 @@ Readback metadata must stay compact. It may include tweet id, author ids/handle,
 
 The memory builder must recognize production `x_official_auto_post` as a final action, while keeping legacy offline `x_official_auto_post_planned` support.
 
-## Request Cap Contract
+## Request Accounting Contract
 
-TwitterAPI.io readback consumes public X request units. Monthly public X request accounting should count all TwitterAPI.io API audit rows for the month, not only search operations.
-
-Before allowing an `auto_post`, production policy evaluation must reserve one estimated public X request for post readback. If that reservation would exceed the account public X monthly request cap, the operation must defer before calling X official create-post or TwitterAPI.io readback.
+TwitterAPI.io readback still records an `api_call_audit` row with request units, but .024 removed monthly public X budget policy from V0. Source collection has its own per-run request limit; post readback is an audit/readback step after a successful X official post and must not fall back to browser access.
 
 ## Safety Contract
 

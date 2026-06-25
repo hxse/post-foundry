@@ -1,6 +1,6 @@
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import accountsExample from "../config/accounts.example.json";
+import accountsExample from "./fixtures/accounts";
 import { parseAccountRegistryConfig, resolveAccountRef } from "../src/lib/accounts/registry";
 import { RuntimeRepository } from "../src/lib/storage/repositories";
 import { applyRuntimeMigrations } from "../src/lib/storage/sqlite";

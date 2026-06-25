@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import accountsExample from "../config/accounts.example.json";
+import accountsExample from "./fixtures/accounts";
 import type { AccountInitialPrompt } from "../src/lib/accounts/account-prompt";
 import { parseAccountRegistryConfig, resolveAccountRef, type AccountConfig, type AccountRegistry } from "../src/lib/accounts/registry";
 import { buildAccountMemory } from "../src/lib/memory/account-memory";
@@ -18,7 +18,7 @@ import { RuntimeRepository } from "../src/lib/storage/repositories";
 import { applyRuntimeMigrations } from "../src/lib/storage/sqlite";
 
 const now = "2026-06-24T04:00:00.000Z";
-const promptText = "SECRET ACCOUNT PROMPT: 关注 AI 产品化、开源工具和长期主义表达。";
+const promptText = "账号方向：AI、open_source、frontier_tech。\n发帖原则：自然、具体、可复盘。";
 
 describe("production v0 operation loop", () => {
   it("runs source, topic, context, LLM draft, policy, and X auto-post through one production trace", async () => {
@@ -146,74 +146,6 @@ describe("production v0 operation loop", () => {
         }
       });
       expect(memory.nextRunHints.join("\n")).toContain("compare confirmed post metrics");
-    } finally {
-      db.close();
-      await rm(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("defers auto-post when readback reservation would exceed the public X request cap", async () => {
-    const dir = await tempDir();
-    const db = openMigratedTestDb();
-    try {
-      const repo = new RuntimeRepository(db);
-      const registry = registryWithPublicXRequestCap("zh-tech", 1);
-      const account = resolveAccountRef(registry, { accountKey: "zh-tech" }).account;
-      const publicX = fakePublicXProvider();
-      const autoPoster = fakeAutoPoster();
-
-      const result = await runOnlineOperationOnce({
-        accountKey: "zh-tech",
-        lockDir: dir,
-        traceId: "trace-prod-v0-readback-cap-1",
-        now: fixedNow(now),
-        enableHeartbeat: false,
-        operation: createProductionOperationExecutor({
-          repo,
-          registry,
-          accountKey: "zh-tech",
-          publicXProvider: publicX,
-          draftGenerator: fakeDraftGenerator(naturalDraftOutput("draft-prod-readback-cap-1")),
-          autoPoster,
-          notificationSender: fakeNotifier(),
-          loadPrompt: () => initialPrompt("zh-tech"),
-          maxQueries: 1,
-          perQueryLimit: 2
-        })
-      });
-
-      expect(result).toMatchObject({
-        outcome: "skipped",
-        finalAction: "policy_terminal_noop",
-        summary: {
-          policy_outcome: "defer",
-          policy_route: "deferred",
-          final_action_kind: "policy_terminal"
-        }
-      });
-      expect(publicX.calls).toEqual([{ query: "AI", limit: 2 }]);
-      expect(publicX.lookups).toHaveLength(0);
-      expect(autoPoster.posts).toHaveLength(0);
-      const policyRun = repo.listAiRunsForAccount(account.account_uuid).find((run) => run.purpose === "automation_policy");
-      expect(policyRun?.input_json).toContain('"estimatedPublicXRequests":1');
-      expect(repo.listAiDecisionsForAccount(account.account_uuid)).toMatchObject([
-        {
-          outcome: "defer",
-          requires_human_review: 0
-        }
-      ]);
-      expect(JSON.parse(repo.listAiDecisionsForAccount(account.account_uuid)[0].rationale_json).reasons.map((reason: { code: string }) => reason.code)).toContain(
-        "public_x_request_cap_exceeded"
-      );
-      expect(repo.listAiActionsForAccount(account.account_uuid)).toMatchObject([
-        {
-          action_type: "policy_terminal_noop",
-          status: "skipped"
-        }
-      ]);
-      expect(repo.listApiCallAuditForAccount(account.account_uuid).map((audit) => [audit.provider, audit.operation, audit.status].join(":"))).not.toContain(
-        "twitterapi.io:public_x_post_readback:succeeded"
-      );
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });
@@ -602,7 +534,7 @@ describe("production v0 operation loop", () => {
     const db = openMigratedTestDb();
     try {
       const repo = new RuntimeRepository(db);
-      const registry = registryWithPublicXRequestCap("zh-tech", 0);
+      const registry = registryWithPublicXDisabled("zh-tech");
       const account = resolveAccountRef(registry, { accountKey: "zh-tech" }).account;
       const publicX = fakePublicXProvider();
       const draftGenerator = fakeDraftGenerator(naturalDraftOutput("draft-should-not-run"));
@@ -638,7 +570,7 @@ describe("production v0 operation loop", () => {
         finalAction: "source_collection_skipped",
         summary: {
           source_collection_status: "skipped",
-          skipped_reason: "public_x_request_cap_reached"
+          skipped_reason: "public_x_disabled"
         }
       });
       expect(publicX.calls).toHaveLength(0);
@@ -654,7 +586,7 @@ describe("production v0 operation loop", () => {
     }
   });
 
-  it("stops before prompt and downstream providers when source collection returns no materials", async () => {
+  it("stops before downstream providers when source collection returns no materials", async () => {
     const dir = await tempDir();
     const db = openMigratedTestDb();
     try {
@@ -700,7 +632,7 @@ describe("production v0 operation loop", () => {
         }
       });
       expect(publicX.calls).toEqual([{ query: "AI", limit: 2 }]);
-      expect(promptLoads).toBe(0);
+      expect(promptLoads).toBe(1);
       expect(draftGenerator.requests).toHaveLength(0);
       expect(autoPoster.posts).toHaveLength(0);
       expect(notifier.messages).toHaveLength(0);
@@ -725,14 +657,14 @@ function registryWithRealPostingEnabled(accountKey: string): AccountRegistry {
   return parseAccountRegistryConfig(config);
 }
 
-function registryWithPublicXRequestCap(accountKey: string, monthlyRequestCap: number): AccountRegistry {
+function registryWithPublicXDisabled(accountKey: string): AccountRegistry {
   const config = JSON.parse(JSON.stringify(accountsExample)) as typeof accountsExample;
   const account = config.accounts.find((candidate) => candidate.account_key === accountKey);
   if (!account) {
     throw new Error(`missing account fixture: ${accountKey}`);
   }
   account.posting.real_posting_enabled = true;
-  account.data_sources.public_x.monthly_request_cap = monthlyRequestCap;
+  account.data_sources.public_x.enabled = false;
   return parseAccountRegistryConfig(config);
 }
 

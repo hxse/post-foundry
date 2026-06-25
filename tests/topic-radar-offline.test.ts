@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import accountsExample from "../config/accounts.example.json";
+import accountsExample from "./fixtures/accounts";
 import type { AccountInitialPrompt } from "../src/lib/accounts/account-prompt";
 import {
   createAccountConfigSnapshot,

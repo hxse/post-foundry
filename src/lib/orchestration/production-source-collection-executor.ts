@@ -6,6 +6,7 @@ import {
 } from "../accounts/registry";
 import type { AccountInitialPrompt } from "../accounts/account-prompt";
 import { ApiError } from "../api/errors";
+import { derivePublicXSearchQueriesFromPrompt } from "../context/source-queries";
 import { collectAccountPublicXSourceBatch, type PublicXSourceCollectionResult } from "../context/source-collection";
 import { buildSourceContext, recordSourceContextIngestion, type RecentPostInput, type SourceContextPackage } from "../context/source-ingestion";
 import type { PublicXDataProvider } from "../providers/public-x";
@@ -52,6 +53,9 @@ async function runProductionSourceCollection(
     capturedAt: context.startedAt
   });
   const configSnapshotId = input.configSnapshotId ?? input.repo.saveConfigSnapshot(configSnapshot);
+  const shouldLoadPromptForSource = account.enabled && account.data_sources.public_x.enabled;
+  const promptForSource = shouldLoadPromptForSource ? await input.loadPrompt() : undefined;
+  const sourceQueries = promptForSource ? derivePublicXSearchQueriesFromPrompt(promptForSource) : [];
 
   const sourceCollection = await collectAccountPublicXSourceBatch({
     repo: input.repo,
@@ -62,6 +66,7 @@ async function runProductionSourceCollection(
     auditEventId: idsFor(context.traceId).sourceCollectionAuditEventId,
     configSnapshotId,
     collectedAt: context.startedAt,
+    sourceQueries,
     maxQueries: input.maxQueries,
     perQueryLimit: input.perQueryLimit
   });
@@ -77,7 +82,7 @@ async function runProductionSourceCollection(
     account,
     configSnapshot,
     configSnapshotId,
-    prompt: await input.loadPrompt(),
+    prompt: promptForSource ?? await input.loadPrompt(),
     materials: sourceCollection.materials,
     recentPosts: input.recentPosts ?? [],
     observedAt: context.startedAt,

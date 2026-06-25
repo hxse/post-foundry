@@ -31,8 +31,6 @@ export type AutomationPolicyContext = {
   evaluatedAt: string;
   postedTodayCount: number;
   lastPostedAt?: string;
-  publicXRequestsThisMonth: number;
-  estimatedPublicXRequests: number;
 };
 
 export type AutomationPolicyDecision = {
@@ -90,9 +88,7 @@ const automationPolicyContextSchema = z
   .object({
     evaluatedAt: z.string().datetime(),
     postedTodayCount: z.number().int().nonnegative(),
-    lastPostedAt: z.string().datetime().optional(),
-    publicXRequestsThisMonth: z.number().int().nonnegative().default(0),
-    estimatedPublicXRequests: z.number().int().nonnegative().default(0)
+    lastPostedAt: z.string().datetime().optional()
   })
   .strict();
 
@@ -162,11 +158,6 @@ export function evaluateAutomationPolicy(input: EvaluateAutomationPolicyInput): 
     addReason(reasons, "cooldown_active", "block", `cooldown still has ${cooldownRemainingMinutes} minutes remaining`);
   }
 
-  const requestCapReasons = evaluateRequestCaps(input.account, context);
-  for (const reason of requestCapReasons) {
-    addReason(reasons, reason.code, "block", reason.message);
-  }
-  addCheck(checks, "public_x_request_cap", requestCapReasons.length === 0, "projected public X request usage must stay within account cap");
 
   const outcome = chooseOutcome(reasons);
   const route = chooseRoute(outcome);
@@ -318,13 +309,6 @@ function getCooldownRemainingMinutes(account: AccountConfig, context: Automation
   return Math.max(0, account.posting.cooldown_minutes - elapsedMinutes);
 }
 
-function evaluateRequestCaps(account: AccountConfig, context: AutomationPolicyContext): Array<{ code: string; message: string }> {
-  const reasons: Array<{ code: string; message: string }> = [];
-  if (context.publicXRequestsThisMonth + context.estimatedPublicXRequests > account.data_sources.public_x.monthly_request_cap) {
-    reasons.push({ code: "public_x_request_cap_exceeded", message: "projected public X request usage exceeds monthly account cap" });
-  }
-  return reasons;
-}
 
 function chooseOutcome(reasons: AutomationPolicyReason[]): AutomationPolicyOutcome {
   if (reasons.some((reason) => reason.severity === "block")) {
@@ -334,8 +318,7 @@ function chooseOutcome(reasons: AutomationPolicyReason[]): AutomationPolicyOutco
         [
           "real_posting_disabled",
           "daily_max_reached",
-          "cooldown_active",
-          "public_x_request_cap_exceeded"
+          "cooldown_active"
         ].includes(reason.code)
       );
     return onlyOperationalBlocks ? "defer" : "reject";

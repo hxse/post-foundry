@@ -43,7 +43,7 @@ Prompt plaintext must not be written to runtime ledger. Ledger may store prompt 
 ## Safety Contract
 
 * The production loop may decide not to post.
-* X official real posting still requires `POST_FOUNDRY_ALLOW_REAL_X_POST=1` inside the X publisher.
+* X official real posting is reached only through production/debug entrypoints that explicitly request real posting.
 * Account `posting.real_posting_enabled` must pass policy before X auto post.
 * Linked or over-280-character drafts route to Telegram human notification.
 * Online/cost-bearing commands are manual only; default tests must stay offline.

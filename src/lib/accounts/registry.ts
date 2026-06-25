@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
+import { readFile, realpath } from "node:fs/promises";
+import { dirname, extname, isAbsolute, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { ApiError } from "../api/errors";
+import { defaultSecretsPath, loadSecretsFile, type SecretsFile } from "../api/secrets";
 
 const accountUuidSchema = z.string().uuid();
 const accountKeySchema = z
@@ -72,8 +75,7 @@ const dataSourcesSchema = z
       .object({
         provider: z.enum(["twitterapi.io"]),
         enabled: z.boolean(),
-        search_keywords: uniqueStringList().default([]),
-        monthly_request_cap: z.number().int().nonnegative()
+        max_requests_per_run: z.number().int().positive()
       })
       .strict()
   })
@@ -84,6 +86,25 @@ const stylePolicySchema = z
     voice: z.string().min(1),
     rules: uniqueStringList().default([]),
     banned_phrases: uniqueStringList().default([])
+  })
+  .strict();
+
+const accountLocalProfileSchema = z
+  .object({
+    posting: postingPolicySchema.default({
+      cadence_hours: 8,
+      daily_min: 0,
+      daily_max: 3,
+      cooldown_minutes: 90,
+      require_approval: false,
+      real_posting_enabled: false
+    }),
+    source: z
+      .object({
+        enabled: z.boolean().default(true),
+        max_requests_per_run: z.number().int().positive().max(10).default(10)
+      })
+      .strict()
   })
   .strict();
 
@@ -155,6 +176,7 @@ const accountRegistryConfigSchema = z
   });
 
 export type AccountConfig = z.infer<typeof accountConfigSchema>;
+export type AccountLocalProfile = z.infer<typeof accountLocalProfileSchema>;
 export type XIdentity = z.infer<typeof xIdentitySchema>;
 export type AccountRegistryConfig = z.infer<typeof accountRegistryConfigSchema>;
 export type AccountRegistry = {
@@ -195,6 +217,57 @@ export type AccountKeyRenameAuditRecord = {
   actor: string;
   at: string;
 };
+
+export async function loadAccountRegistryFromSecretsFile(params: {
+  secretsPath?: string;
+  cwd?: string;
+} = {}): Promise<AccountRegistry> {
+  const secretsPath = params.secretsPath ?? defaultSecretsPath;
+  const secrets = await loadSecretsFile(secretsPath);
+  return buildAccountRegistryFromSecrets({
+    secrets,
+    cwd: params.cwd ?? dirname(dirname(resolve(secretsPath)))
+  });
+}
+
+export async function buildAccountRegistryFromSecrets(params: {
+  secrets: SecretsFile;
+  cwd?: string;
+}): Promise<AccountRegistry> {
+  const cwd = params.cwd ?? process.cwd();
+  const accounts: AccountConfig[] = [];
+
+  for (const [accountKey, accountSecrets] of Object.entries(params.secrets.accounts)) {
+    const parsedKey = accountKeySchema.safeParse(accountKey);
+    if (!parsedKey.success) {
+      throw accountRegistryError("invalid_request", "account key is invalid: " + accountKey);
+    }
+
+    if (!accountSecrets.profile_path) {
+      throw accountRegistryError("missing_credentials", "profile_path is missing for account: " + accountKey);
+    }
+
+    const profile = await loadAccountLocalProfile({
+      cwd,
+      profilePath: accountSecrets.profile_path
+    });
+    accounts.push(createAccountConfigFromLocalProfile(accountKey, profile));
+  }
+
+  return buildAccountRegistry({
+    version: 1,
+    global: {
+      default_timezone: "Asia/Shanghai",
+      default_language: "zh-CN",
+      safety: {
+        online_debug_requires_user_request: true,
+        x_browser_access: "forbidden"
+      }
+    },
+    accounts,
+    x_identities: []
+  });
+}
 
 export function parseAccountRegistryConfig(input: unknown): AccountRegistry {
   const parsed = accountRegistryConfigSchema.safeParse(input);
@@ -304,6 +377,135 @@ export function renameAccountKey(params: {
       at
     }
   };
+}
+
+function createAccountConfigFromLocalProfile(accountKey: string, profile: AccountLocalProfile): AccountConfig {
+  return {
+    account_uuid: deriveAccountUuidFromAccountKey(accountKey),
+    account_key: accountKey,
+    display_name: accountKey,
+    platform: "x",
+    language: inferLanguageFromAccountKey(accountKey),
+    enabled: true,
+    config_version: 1,
+    topics: {
+      include: [],
+      exclude: []
+    },
+    posting: profile.posting,
+    data_sources: {
+      public_x: {
+        provider: "twitterapi.io",
+        enabled: profile.source.enabled,
+        max_requests_per_run: profile.source.max_requests_per_run
+      }
+    },
+    style: {
+      voice: "natural, concise",
+      rules: [],
+      banned_phrases: ["smoke test", "PostFoundry"]
+    }
+  };
+}
+
+async function loadAccountLocalProfile(params: { cwd: string; profilePath: string }): Promise<AccountLocalProfile> {
+  const resolved = await resolveProfilePath(params);
+  let raw: string;
+  try {
+    raw = await readFile(resolved.absolutePath, "utf8");
+  } catch (error) {
+    throw new ApiError({
+      code: "missing_credentials",
+      provider: "local",
+      stage: "account_registry",
+      message: "account profile file is missing: " + resolved.profilePath,
+      details: error
+    });
+  }
+
+  let json: unknown;
+  try {
+    json = JSON.parse(raw) as unknown;
+  } catch (error) {
+    throw new ApiError({
+      code: "invalid_request",
+      provider: "local",
+      stage: "account_registry",
+      message: "account profile JSON is invalid: " + resolved.profilePath,
+      details: error
+    });
+  }
+
+  const parsed = accountLocalProfileSchema.safeParse(json);
+  if (!parsed.success) {
+    throw new ApiError({
+      code: "invalid_request",
+      provider: "local",
+      stage: "account_registry",
+      message: "account profile schema is invalid: " + resolved.profilePath,
+      details: parsed.error.flatten()
+    });
+  }
+
+  return parsed.data;
+}
+
+async function resolveProfilePath(params: { cwd: string; profilePath: string }): Promise<{
+  absolutePath: string;
+  profilePath: string;
+}> {
+  if (isAbsolute(params.profilePath)) {
+    throw accountRegistryError("invalid_request", "profile_path must be relative and under secrets/");
+  }
+
+  if (extname(params.profilePath) !== ".json") {
+    throw accountRegistryError("invalid_request", "profile_path must point to a .json file");
+  }
+
+  const cwd = resolve(params.cwd);
+  const secretsRoot = resolve(cwd, "secrets");
+  const absolutePath = resolve(cwd, params.profilePath);
+  const pathWithinSecrets = relative(secretsRoot, absolutePath);
+  if (!pathWithinSecrets || pathWithinSecrets.startsWith("..") || isAbsolute(pathWithinSecrets)) {
+    throw accountRegistryError("invalid_request", "profile_path must stay under secrets/");
+  }
+
+  let realSecretsRoot: string;
+  let realProfilePath: string;
+  try {
+    realSecretsRoot = await realpath(secretsRoot);
+    realProfilePath = await realpath(absolutePath);
+  } catch (error) {
+    throw new ApiError({
+      code: "missing_credentials",
+      provider: "local",
+      stage: "account_registry",
+      message: "account profile file is missing: " + relative(cwd, absolutePath).split(sep).join("/"),
+      details: error
+    });
+  }
+
+  const realPathWithinSecrets = relative(realSecretsRoot, realProfilePath);
+  if (!realPathWithinSecrets || realPathWithinSecrets.startsWith("..") || isAbsolute(realPathWithinSecrets)) {
+    throw accountRegistryError("invalid_request", "profile_path must resolve under secrets/");
+  }
+
+  return {
+    absolutePath: realProfilePath,
+    profilePath: relative(cwd, absolutePath).split(sep).join("/")
+  };
+}
+
+export function deriveAccountUuidFromAccountKey(accountKey: string): string {
+  const bytes = Buffer.from(createHash("sha256").update("post-foundry.account:" + accountKey).digest().subarray(0, 16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x50;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function inferLanguageFromAccountKey(accountKey: string): string {
+  return accountKey.startsWith("en-") ? "en-US" : "zh-CN";
 }
 
 function buildAccountRegistry(config: AccountRegistryConfig): AccountRegistry {

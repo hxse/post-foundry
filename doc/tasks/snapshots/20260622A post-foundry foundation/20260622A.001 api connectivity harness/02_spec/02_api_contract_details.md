@@ -79,7 +79,6 @@ X_DEBUG_REFRESH_TOKEN              可选，X refresh token 临时覆盖。
 X_DEBUG_ACCOUNT_KEY                可选，调试账号 key 临时覆盖；日常运行应使用 --account。
 X_DEBUG_POST_TEXT                  可选，真实发帖文本临时覆盖；日常运行应使用命令参数或项目队列。
 
-POST_FOUNDRY_ALLOW_REAL_X_POST     真实发帖硬开关，必须等于 1 才允许发帖。
 POST_FOUNDRY_API_DEBUG_TIMEOUT_MS  在线 debug 超时，可选。
 ```
 
@@ -262,7 +261,6 @@ type XPostOutput =
 
 ```text
 dryRun = false
-POST_FOUNDRY_ALLOW_REAL_X_POST = 1
 --account 已指定且能解析到本地 secrets 中的账号
 账号级 x_official.access_token 已配置，或 X_DEBUG_ACCESS_TOKEN 临时覆盖已配置
 --post-text 非空，或 X_DEBUG_POST_TEXT 临时覆盖非空
@@ -274,7 +272,7 @@ POST_FOUNDRY_ALLOW_REAL_X_POST = 1
 
 `debug-api-online --allow-real-post` 在调用任何 TwitterAPI.io 或 X API 前必须执行保守文本拦截。若文本包含明显测试/调试标记，例如 `PostFoundry`、`smoke`、`test`、`debug`、`dry-run`、task id、`测试` 或 `调试`，命令必须返回 `real_post_not_allowed`，不得读取 secrets 后继续进入在线 smoke，也不得发出真实请求。生产发帖队列的内容策略另行设计，本规则只约束 .001 debug 真实发帖入口。
 
-真实发帖和真实发帖后的读回验证都不能作为自动测试运行。即使已经设置 `POST_FOUNDRY_ALLOW_REAL_X_POST=1`，也只能在用户当前明确要求并提供或确认发帖文本后执行。
+真实发帖和真实发帖后的读回验证都不能作为自动测试运行。即使 debug 入口显式传入 `--allow-real-post`，也只能在用户当前明确要求并提供或确认发帖文本后执行。
 
 X publisher 错误语义：
 

@@ -20,7 +20,7 @@
   * manual online debug entrypoint
   * default dry-run
   * `--collect` required for TwitterAPI.io network access and ledger writes
-  * supports `--config-file`, `--secrets-file`, `--db-file`, `--max-queries`, `--per-query-limit`
+  * supports `--secrets-file`, `--db-file`, `--max-requests`, `--per-query-limit`; .024 removed `--config-file`
   * `--collect` requires explicit `--config-file`; example config is dry-run only
 * `tests/source-collection-offline.test.ts`
   * success ledger path

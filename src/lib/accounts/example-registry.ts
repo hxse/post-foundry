@@ -1,4 +1,6 @@
-{
+import type { AccountRegistryConfig } from "./registry";
+
+const exampleAccountRegistryConfig = {
   "version": 1,
   "global": {
     "default_timezone": "Asia/Shanghai",
@@ -43,12 +45,7 @@
         "public_x": {
           "provider": "twitterapi.io",
           "enabled": true,
-          "search_keywords": [
-            "AI",
-            "open_source",
-            "frontier_tech"
-          ],
-          "monthly_request_cap": 1000
+          "max_requests_per_run": 10
         }
       },
       "style": {
@@ -97,12 +94,7 @@
         "public_x": {
           "provider": "twitterapi.io",
           "enabled": true,
-          "search_keywords": [
-            "ai_infra",
-            "devtools",
-            "open_source"
-          ],
-          "monthly_request_cap": 1200
+          "max_requests_per_run": 10
         }
       },
       "style": {
@@ -133,4 +125,8 @@
       "oauth_token_status": "missing"
     }
   ]
+} satisfies AccountRegistryConfig;
+
+export function createExampleAccountRegistryConfig(): AccountRegistryConfig {
+  return JSON.parse(JSON.stringify(exampleAccountRegistryConfig)) as AccountRegistryConfig;
 }

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { createAccountConfigSnapshot, resolveAccountRef, type AccountConfig, type AccountConfigSnapshot, type AccountRegistry } from "../accounts/registry";
 import type { AccountInitialPrompt } from "../accounts/account-prompt";
 import { ApiError } from "../api/errors";
+import { derivePublicXSearchQueriesFromPrompt } from "../context/source-queries";
 import { collectAccountPublicXSourceBatch, type PublicXSourceCollectionResult } from "../context/source-collection";
 import {
   buildSourceContext,
@@ -116,6 +117,9 @@ async function runProductionOperation(
     capturedAt: context.startedAt
   });
   const configSnapshotId = input.configSnapshotId ?? input.repo.saveConfigSnapshot(configSnapshot);
+  const shouldLoadPromptForSource = account.enabled && account.data_sources.public_x.enabled;
+  const promptForSource = shouldLoadPromptForSource ? await input.loadPrompt() : undefined;
+  const sourceQueries = promptForSource ? derivePublicXSearchQueriesFromPrompt(promptForSource) : [];
 
   const sourceCollection = await collectAccountPublicXSourceBatch({
     repo: input.repo,
@@ -126,6 +130,7 @@ async function runProductionOperation(
     auditEventId: ids.sourceCollectionAuditEventId,
     configSnapshotId,
     collectedAt: context.startedAt,
+    sourceQueries,
     maxQueries: input.maxQueries,
     perQueryLimit: input.perQueryLimit
   });
@@ -143,7 +148,7 @@ async function runProductionOperation(
     capturedAt: context.startedAt,
     traceLimit: input.memoryTraceLimit
   });
-  const prompt = await input.loadPrompt();
+  const prompt = promptForSource ?? await input.loadPrompt();
   const recentPosts = input.recentPosts ?? buildRecentPostsFromLedger(input.repo, account.account_uuid, input.recentPostsLimit ?? 50);
 
   const topicRadar = buildTopicRadar({
@@ -265,10 +270,11 @@ async function runProductionOperation(
     accountUuid: account.account_uuid,
     evaluatedAt: context.startedAt
   });
-  const { policyContext, policyDecision } = evaluateProductionPolicyWithReadbackReservation({
+  const policyContext = basePolicyContext;
+  const policyDecision = evaluateAutomationPolicy({
     account,
     candidate: draftGate.candidate,
-    baseContext: basePolicyContext
+    context: policyContext
   });
   recordPolicyEvaluation({
     repo: input.repo,
@@ -987,47 +993,14 @@ function recordXPostFailedAction(input: {
   });
 }
 
-function evaluateProductionPolicyWithReadbackReservation(input: {
-  account: AccountConfig;
-  candidate: PostingCandidate;
-  baseContext: AutomationPolicyContext;
-}): { policyContext: AutomationPolicyContext; policyDecision: AutomationPolicyDecision } {
-  const firstDecision = evaluateAutomationPolicy({
-    account: input.account,
-    candidate: input.candidate,
-    context: input.baseContext
-  });
-  if (firstDecision.outcome !== "auto_post") {
-    return {
-      policyContext: input.baseContext,
-      policyDecision: firstDecision
-    };
-  }
-
-  const reservedContext: AutomationPolicyContext = {
-    ...input.baseContext,
-    estimatedPublicXRequests: input.baseContext.estimatedPublicXRequests + 1
-  };
-  return {
-    policyContext: reservedContext,
-    policyDecision: evaluateAutomationPolicy({
-      account: input.account,
-      candidate: input.candidate,
-      context: reservedContext
-    })
-  };
-}
 
 function buildProductionPolicyContext(input: {
   repo: RuntimeRepository;
   accountUuid: string;
   evaluatedAt: string;
 }): AutomationPolicyContext {
-  const apiAudits = input.repo.listApiCallAuditForAccount(input.accountUuid);
   const actions = input.repo.listAiActionsForAccount(input.accountUuid);
-  const monthPrefix = input.evaluatedAt.slice(0, 7);
   const todayPrefix = input.evaluatedAt.slice(0, 10);
-  const monthly = apiAudits.filter((audit) => audit.started_at.startsWith(monthPrefix) && audit.status === "succeeded");
   const postedActions = actions.filter((action) => action.action_type === "x_official_auto_post" && action.status === "succeeded");
   const postedToday = postedActions.filter((action) => action.started_at.startsWith(todayPrefix));
   const lastPostedAt = postedActions.map((action) => action.finished_at ?? action.started_at).sort().at(-1);
@@ -1035,11 +1008,7 @@ function buildProductionPolicyContext(input: {
   return {
     evaluatedAt: input.evaluatedAt,
     postedTodayCount: postedToday.length,
-    lastPostedAt,
-    publicXRequestsThisMonth: monthly
-      .filter((audit) => audit.provider === "twitterapi.io")
-      .reduce((sum, audit) => sum + audit.request_units, 0),
-    estimatedPublicXRequests: 0
+    lastPostedAt
   };
 }
 

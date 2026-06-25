@@ -8,14 +8,13 @@ Preflight must require:
 
 * account exists and is enabled;
 * public X source collection is enabled;
-* public X search keywords are configured;
-* public X monthly request cap is greater than 0;
+* account initial prompt can derive at least one public X source query;
+* public X per-run source request cap is greater than 0;
 * `posting.real_posting_enabled` is true for v0 launch runs;
 * usable TwitterAPI.io API key;
 * usable OpenAI API key;
 * usable X official access token;
 * usable Telegram bot token and notification channel;
-* `POST_FOUNDRY_ALLOW_REAL_X_POST=1`;
 * account initial prompt loads from local secrets and exposes a prompt sha256.
 
 Placeholder values from example files such as `replace-with-*`, `optional-*`, and `@replace_*` are not usable credentials. An optional account-level placeholder must not override a real global provider key.
@@ -32,20 +31,20 @@ just local-init-secrets
 
 Fill ignored local files only:
 
-* `config/accounts.local.json` for real non-secret account config, including `posting.real_posting_enabled: true`;
-* `secrets/accounts.local.json` for TwitterAPI.io, OpenAI, Telegram, X official token, and account prompt reference;
-* optional prompt markdown under `secrets/prompts/*.md`.
+* `secrets/accounts.local.json` for provider credentials, account prompt reference, and profile reference;
+* ignored profile JSON under `secrets/profiles/*.json`, including `posting.real_posting_enabled: true` and `source.max_requests_per_run`;
+* prompt markdown under `secrets/prompts/*.md`.
 
 Run one production cycle manually:
 
 ```bash
-POST_FOUNDRY_ALLOW_REAL_X_POST=1 just prod-online-run-once --account zh-tech --config-file config/accounts.local.json
+just prod-online-run-once --account zh-tech
 ```
 
 Run a loop manually only after a successful one-shot trial:
 
 ```bash
-POST_FOUNDRY_ALLOW_REAL_X_POST=1 just prod-online-run-loop --account zh-tech --config-file config/accounts.local.json --interval-seconds 28800 --jitter-seconds 600 --sleep-utc 16:00-00:00
+just prod-online-run-loop --account zh-tech --interval-seconds 28800 --jitter-seconds 600 --sleep-utc 16:00-00:00
 ```
 
 Stop a foreground loop with Ctrl-C. If running under a process manager later, stop it through that process manager. Same-account once and loop commands share the account lock; one waits for the other instead of running concurrently.

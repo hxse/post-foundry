@@ -9,7 +9,7 @@
 
 ## Goal
 
-把真实公开 X 数据读取接成可审计的 source collection 边界：按账号配置的 public X search keywords 调用 TwitterAPI.io provider，把结果转换成账号隔离的 source materials，并写入 API audit、AI run、evidence refs 和 audit event。
+把真实公开 X 数据读取接成可审计的 source collection 边界：按 source queries 调用 TwitterAPI.io provider，把结果转换成账号隔离的 source materials，并写入 API audit、AI run、evidence refs 和 audit event。
 
 本任务只接第三方公开数据读取，不接 X official 发帖，不接在线 LLM，不把 source collection 自动接进 `prod-online-run-once`。
 

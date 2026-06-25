@@ -11,8 +11,7 @@ export type PublicXSourceCollectionStatus = "succeeded" | "skipped";
 export type PublicXSourceCollectionSkipReason =
   | "account_disabled"
   | "public_x_disabled"
-  | "no_search_keywords"
-  | "public_x_request_cap_reached";
+  | "no_source_queries";
 
 export type PublicXSourceCollectionInput = {
   repo: RuntimeRepository;
@@ -23,6 +22,7 @@ export type PublicXSourceCollectionInput = {
   auditEventId: string;
   collectedAt: string;
   configSnapshotId?: string;
+  sourceQueries?: string[];
   maxQueries?: number;
   perQueryLimit?: number;
 };
@@ -50,7 +50,7 @@ const defaultPerQueryLimit = 5;
 
 export async function collectAccountPublicXSourceBatch(input: PublicXSourceCollectionInput): Promise<PublicXSourceCollectionResult> {
   const parsed = parseInput(input);
-  const skipReason = getSkipReason(parsed.account, parsed.publicXRequestsThisMonth);
+  const skipReason = getSkipReason(parsed.account, parsed.sourceQueries);
   if (skipReason) {
     const result: PublicXSourceCollectionResult = {
       kind: "public_x_source_collection_v1",
@@ -70,30 +70,8 @@ export async function collectAccountPublicXSourceBatch(input: PublicXSourceColle
     return result;
   }
 
-  const remainingRequests = parsed.account.data_sources.public_x.monthly_request_cap - parsed.publicXRequestsThisMonth;
-  const queries = uniqueStrings(parsed.account.data_sources.public_x.search_keywords).slice(
-    0,
-    Math.min(parsed.maxQueries, remainingRequests)
-  );
-
-  if (queries.length === 0) {
-    const result: PublicXSourceCollectionResult = {
-      kind: "public_x_source_collection_v1",
-      accountUuid: parsed.account.account_uuid,
-      accountKey: parsed.account.account_key,
-      provider: "twitterapi.io",
-      status: "skipped",
-      skippedReason: "public_x_request_cap_reached",
-      queries: [],
-      apiAuditIds: [],
-      requestUnits: 0,
-      rawCount: 0,
-      duplicateMaterialCount: 0,
-      materials: []
-    };
-    recordCollectionLedger({ ...parsed, result });
-    return result;
-  }
+  const queryLimit = Math.min(parsed.maxQueries, parsed.account.data_sources.public_x.max_requests_per_run);
+  const queries = parsed.sourceQueries.slice(0, queryLimit);
 
   const apiAuditIds: string[] = [];
   const materials: SourceMaterialInput[] = [];
@@ -153,7 +131,7 @@ function parseInput(input: PublicXSourceCollectionInput): Required<Pick<PublicXS
   configSnapshotId?: string;
   maxQueries: number;
   perQueryLimit: number;
-  publicXRequestsThisMonth: number;
+  sourceQueries: string[];
 } {
   const traceId = parseNonEmpty(input.traceId, "traceId");
   const runId = parseNonEmpty(input.runId, "runId");
@@ -161,7 +139,6 @@ function parseInput(input: PublicXSourceCollectionInput): Required<Pick<PublicXS
   const collectedAt = parseIsoDateTime(input.collectedAt, "collectedAt");
   const maxQueries = parsePositiveInteger(input.maxQueries ?? defaultMaxQueries, "maxQueries");
   const perQueryLimit = parsePositiveInteger(input.perQueryLimit ?? defaultPerQueryLimit, "perQueryLimit");
-  const publicXRequestsThisMonth = readMonthlyPublicXRequestUnits(input.repo, input.account.account_uuid, collectedAt);
   if (maxQueries > 10) {
     throw sourceCollectionError("maxQueries must be <= 10");
   }
@@ -183,44 +160,19 @@ function parseInput(input: PublicXSourceCollectionInput): Required<Pick<PublicXS
     configSnapshotId: input.configSnapshotId,
     maxQueries,
     perQueryLimit,
-    publicXRequestsThisMonth
+    sourceQueries: parseSourceQueries(input.sourceQueries ?? input.account.topics.include)
   };
 }
 
-function readMonthlyPublicXRequestUnits(repo: RuntimeRepository, accountUuid: string, collectedAt: string): number {
-  const month = monthWindowUtc(collectedAt);
-  return repo
-    .listApiCallAuditForAccount(accountUuid)
-    .filter((row) => {
-      const startedAt = Date.parse(row.started_at);
-      return (
-        row.provider === "twitterapi.io" &&
-        startedAt >= month.startMs &&
-        startedAt < month.endMs
-      );
-    })
-    .reduce((sum, row) => sum + Number(row.request_units ?? 0), 0);
-}
-
-function monthWindowUtc(value: string): { startMs: number; endMs: number } {
-  const date = new Date(value);
-  const startMs = Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
-  const endMs = Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1);
-  return { startMs, endMs };
-}
-
-function getSkipReason(account: AccountConfig, publicXRequestsThisMonth: number): PublicXSourceCollectionSkipReason | undefined {
+function getSkipReason(account: AccountConfig, sourceQueries: string[]): PublicXSourceCollectionSkipReason | undefined {
   if (!account.enabled) {
     return "account_disabled";
   }
   if (!account.data_sources.public_x.enabled) {
     return "public_x_disabled";
   }
-  if (account.data_sources.public_x.search_keywords.length === 0) {
-    return "no_search_keywords";
-  }
-  if (publicXRequestsThisMonth >= account.data_sources.public_x.monthly_request_cap) {
-    return "public_x_request_cap_reached";
+  if (sourceQueries.length === 0) {
+    return "no_source_queries";
   }
   return undefined;
 }
@@ -235,7 +187,7 @@ function recordCollectionLedger(input: {
   configSnapshotId?: string;
   maxQueries: number;
   perQueryLimit: number;
-  publicXRequestsThisMonth: number;
+  sourceQueries: string[];
   result: PublicXSourceCollectionResult;
 }): void {
   const materialHashes = Object.fromEntries(input.result.materials.map((material) => [material.id, materialTextHash(material)]));
@@ -254,11 +206,10 @@ function recordCollectionLedger(input: {
         account_uuid: input.account.account_uuid,
         account_key: input.account.account_key,
         provider: "twitterapi.io",
-        configured_keywords: input.account.data_sources.public_x.search_keywords,
+        source_queries: input.sourceQueries,
         max_queries: input.maxQueries,
         per_query_limit: input.perQueryLimit,
-        monthly_request_cap: input.account.data_sources.public_x.monthly_request_cap,
-        public_x_requests_this_month: input.publicXRequestsThisMonth,
+        max_requests_per_run: input.account.data_sources.public_x.max_requests_per_run,
         config_snapshot_id: input.configSnapshotId
       },
       output: {
@@ -330,7 +281,7 @@ function tryRecordFailedCollectionLedger(input: {
   configSnapshotId?: string;
   maxQueries: number;
   perQueryLimit: number;
-  publicXRequestsThisMonth: number;
+  sourceQueries: string[];
   queries: string[];
   apiAuditIds: string[];
   error: unknown;
@@ -351,11 +302,10 @@ function tryRecordFailedCollectionLedger(input: {
           account_uuid: input.account.account_uuid,
           account_key: input.account.account_key,
           provider: "twitterapi.io",
-          configured_keywords: input.account.data_sources.public_x.search_keywords,
+          source_queries: input.sourceQueries,
           max_queries: input.maxQueries,
           per_query_limit: input.perQueryLimit,
-          monthly_request_cap: input.account.data_sources.public_x.monthly_request_cap,
-          public_x_requests_this_month: input.publicXRequestsThisMonth,
+          max_requests_per_run: input.account.data_sources.public_x.max_requests_per_run,
           config_snapshot_id: input.configSnapshotId
         },
         output: {
@@ -391,6 +341,10 @@ function tryRecordFailedCollectionLedger(input: {
 
 function sourceTopicTags(account: AccountConfig, query: string): string[] {
   return uniqueStrings([query, ...account.topics.include]);
+}
+
+function parseSourceQueries(value: string[]): string[] {
+  return uniqueStrings(value.map((query) => query.trim()).filter(Boolean));
 }
 
 function uniqueStrings(values: string[]): string[] {

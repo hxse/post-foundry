@@ -16,7 +16,7 @@
   * pass account initial prompt loader into the production executor
   * prompt plaintext remains in memory only
 * `justfile`
-  * production entrypoints use just long args, e.g. `--account zh-tech --config-file config/accounts.local.json`
+  * production entrypoints use just long args, e.g. `--account zh-tech`
   * no `*ARGS`, no required `--` separator, and no `--flag=value` invocation pattern
 * `tests/production-run-once-offline.test.ts`
   * production source/topic/context chain with fake provider
@@ -31,8 +31,8 @@
 * `just check`: passed.
 * `just test`: passed, 19 files / 135 tests.
 * `just --list`: passed.
-* `just --dry-run prod-online-run-once --account zh-tech --config-file config/accounts.local.json`: passed; no command executed.
-* `just --dry-run prod-online-run-loop --account zh-tech --config-file config/accounts.local.json --interval-seconds 28800 --jitter-seconds 60 --sleep-utc 16:00-23:00 --max-iterations 2`: passed; no command executed.
+* `just --dry-run prod-online-run-once --account zh-tech `: passed; no command executed.
+* `just --dry-run prod-online-run-loop --account zh-tech  --interval-seconds 28800 --jitter-seconds 60 --sleep-utc 16:00-23:00 --max-iterations 2`: passed; no command executed.
 * `git diff --check`: passed.
 
 ## Online Runs

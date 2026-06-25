@@ -68,7 +68,7 @@ just debug-api-online
 * 如执行真实发帖，读回验证必须使用第三方公开数据 API，不得打开 `x.com`。
 * 如执行真实发帖，文本必须由人工明确提供或确认，并且像普通真人动态；不得使用机器味测试文案。
 * 如执行真实发帖，`debug-api-online` 必须在任何 TwitterAPI.io 或 X API 调用前拦截明显测试/调试文案，例如包含 `PostFoundry`、`smoke`、`test`、`debug`、`dry-run`、task id、`测试` 或 `调试` 的文本。
-* 只有设置 `POST_FOUNDRY_ALLOW_REAL_X_POST=1` 时，才允许真实发帖。
+* 只有显式传入 `--allow-real-post` 且文案通过真实发帖保护策略时，才允许 debug 入口真实发帖。
 
 手动 token 维护入口是：
 
@@ -155,7 +155,6 @@ real post: skipped, --allow-real-post was not supplied
 真实发帖必须显式开启：
 
 ```text
-POST_FOUNDRY_ALLOW_REAL_X_POST=1 \
 just debug-api-online --account zh-tech --allow-real-post --post-text "越是急着抵达，越要记得看清脚下的路。"
 ```
 

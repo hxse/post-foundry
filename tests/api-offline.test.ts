@@ -256,23 +256,6 @@ describe("api offline contract", () => {
     expect(calls).toBe(0);
   });
 
-  it("blocks real X post when hard switch is disabled", async () => {
-    const publisher = new XOfficialPublisherClient({
-      accessToken: "x-account-token",
-      env: {}
-    });
-
-    await expectApiError(
-      publisher.createPost({
-        accountKey: "zh-tech",
-        text: "real post",
-        dryRun: false
-      }),
-      "real_post_not_allowed",
-      "x_official"
-    );
-  });
-
   it("allows natural real debug post text", () => {
     expect(findRealDebugPostTextViolation("越是急着抵达，越要记得看清脚下的路。")).toBeUndefined();
   });
@@ -328,10 +311,8 @@ describe("api offline contract", () => {
     }
   });
 
-  it("requires X token for real post after hard switch", async () => {
-    const publisher = new XOfficialPublisherClient({
-      env: { POST_FOUNDRY_ALLOW_REAL_X_POST: "1" }
-    });
+  it("requires X token for real post", async () => {
+    const publisher = new XOfficialPublisherClient({});
 
     await expectApiError(
       publisher.createPost({
@@ -347,7 +328,6 @@ describe("api offline contract", () => {
   it("parses X real post success fixture", async () => {
     const publisher = new XOfficialPublisherClient({
       accessToken: "x-account-token",
-      env: { POST_FOUNDRY_ALLOW_REAL_X_POST: "1" },
       fetcher: okJson((url, init) => {
         expect(url).toBe("https://api.x.com/2/tweets");
         expect(init?.method).toBe("POST");
@@ -377,7 +357,6 @@ describe("api offline contract", () => {
   it("maps X API error fixture", async () => {
     const publisher = new XOfficialPublisherClient({
       accessToken: "x-account-token",
-      env: { POST_FOUNDRY_ALLOW_REAL_X_POST: "1" },
       fetcher: jsonResponse(500, { title: "Internal error" })
     });
 

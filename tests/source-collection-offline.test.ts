@@ -1,7 +1,6 @@
-import { resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import accountsExample from "../config/accounts.example.json";
+import accountsExample from "./fixtures/accounts";
 import { parseAccountRegistryConfig, resolveAccountRef, type AccountConfig } from "../src/lib/accounts/registry";
 import { ApiError } from "../src/lib/api/errors";
 import { parseDebugOnlineSourceCollectionArgs } from "../src/lib/context/source-collection-debug-args";
@@ -18,10 +17,10 @@ describe("production source collection v0", () => {
       parseDebugOnlineSourceCollectionArgs([
         "--account",
         "zh-tech",
-        "--config-file",
-        "config/accounts.local.json",
+        "--secrets-file",
+        "secrets/accounts.local.json",
         "--collect",
-        "--max-queries",
+        "--max-requests",
         "2",
         "--per-query-limit",
         "3"
@@ -29,34 +28,23 @@ describe("production source collection v0", () => {
     ).toMatchObject({
       account: "zh-tech",
       collect: true,
-      configFile: "config/accounts.local.json",
-      configFileExplicit: true,
-      maxQueries: 2,
+      secretsFile: "secrets/accounts.local.json",
+      maxRequests: 2,
       perQueryLimit: 3
     });
     expect(parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech"])).toMatchObject({
       collect: false,
-      configFile: "config/accounts.example.json",
-      configFileExplicit: false
+      secretsFile: undefined
     });
   });
 
   it("rejects unsafe online source collection debug args before side effects", () => {
-    expect(() => parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--collect"])).toThrow(
-      "--config-file is required when --collect is supplied"
-    );
-    expect(() =>
-      parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--config-file", "./config/accounts.example.json", "--collect"])
-    ).toThrow("--config-file must not be config/accounts.example.json");
-    expect(() =>
-      parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--config-file", resolve("config/accounts.example.json"), "--collect"])
-    ).toThrow("--config-file must not be config/accounts.example.json");
-    expect(() =>
-      parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--config-file", "config/accounts.local.json", "--max-queries", "11"])
-    ).toThrow("--max-queries must be an integer <= 10");
-    expect(() =>
-      parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--config-file", "config/accounts.local.json", "--per-query-limit", "11"])
-    ).toThrow("--per-query-limit must be an integer <= 10");
+    expect(() => parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--config-file", "config/accounts.local.json"]))
+      .toThrow("Unknown argument: --config-file");
+    expect(() => parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--max-requests", "11"]))
+      .toThrow("--max-requests must be an integer <= 10");
+    expect(() => parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--per-query-limit", "11"]))
+      .toThrow("--per-query-limit must be an integer <= 10");
   });
 
   it("collects account-scoped public X materials and writes compact ledger", async () => {
@@ -74,6 +62,7 @@ describe("production source collection v0", () => {
         auditEventId: "source-collection-event-1",
         configSnapshotId: "snapshot-source-collection-1",
         collectedAt: now,
+        sourceQueries: ["AI", "open_source", "frontier_tech"],
         maxQueries: 2,
         perQueryLimit: 2
       });
@@ -162,19 +151,11 @@ describe("production source collection v0", () => {
     }
   });
 
-  it("skips collection without provider calls when account request cap is reached", async () => {
+  it("limits collection requests per run from account profile", async () => {
     const db = openMigratedTestDb();
     try {
       const { repo, account } = seedAccounts(db);
-      repo.recordApiCallAudit({
-        id: "source-collection-existing-usage",
-        accountUuid: account.account_uuid,
-        provider: "twitterapi.io",
-        operation: "public_x_search",
-        status: "succeeded",
-        requestUnits: account.data_sources.public_x.monthly_request_cap,
-        startedAt: now
-      });
+      account.data_sources.public_x.max_requests_per_run = 1;
       const provider = fakePublicXProvider();
 
       const result = await collectAccountPublicXSourceBatch({
@@ -184,30 +165,48 @@ describe("production source collection v0", () => {
         traceId: "trace-source-collection-cap-1",
         runId: "source-collection-cap-run-1",
         auditEventId: "source-collection-cap-event-1",
-        collectedAt: now
+        collectedAt: now,
+        sourceQueries: ["AI", "open_source"],
+        maxQueries: 2,
+        perQueryLimit: 1
+      });
+
+      expect(provider.calls).toEqual([{ query: "AI", limit: 1 }]);
+      expect(result).toMatchObject({
+        status: "succeeded",
+        queries: ["AI"],
+        requestUnits: 1
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("skips collection without provider calls when no source queries are available", async () => {
+    const db = openMigratedTestDb();
+    try {
+      const { repo, account } = seedAccounts(db);
+      const provider = fakePublicXProvider();
+
+      const result = await collectAccountPublicXSourceBatch({
+        repo,
+        account,
+        provider,
+        traceId: "trace-source-collection-no-query-1",
+        runId: "source-collection-no-query-run-1",
+        auditEventId: "source-collection-no-query-event-1",
+        collectedAt: now,
+        sourceQueries: []
       });
 
       expect(provider.calls).toHaveLength(0);
       expect(result).toMatchObject({
         status: "skipped",
-        skippedReason: "public_x_request_cap_reached",
+        skippedReason: "no_source_queries",
         requestUnits: 0,
         materials: []
       });
-      expect(repo.listApiCallAuditForAccount(account.account_uuid)).toHaveLength(1);
       expect(repo.listEvidenceRefsForAccount(account.account_uuid)).toHaveLength(0);
-      expect(repo.listAiRunsForAccount(account.account_uuid)).toMatchObject([
-        {
-          id: "source-collection-cap-run-1",
-          status: "skipped"
-        }
-      ]);
-      expect(repo.listAuditEventsForAccount(account.account_uuid)).toMatchObject([
-        {
-          id: "source-collection-cap-event-1",
-          event_type: "public_x_source_collection_skipped"
-        }
-      ]);
     } finally {
       db.close();
     }
@@ -239,6 +238,7 @@ describe("production source collection v0", () => {
           runId: "source-collection-failed-run-1",
           auditEventId: "source-collection-failed-event-1",
           collectedAt: now,
+          sourceQueries: ["AI"],
           maxQueries: 1,
           perQueryLimit: 1
         })
@@ -289,6 +289,7 @@ describe("production source collection v0", () => {
           runId: "source-collection-invalid-run-1",
           auditEventId: "source-collection-invalid-event-1",
           collectedAt: now,
+          sourceQueries: ["AI"],
           maxQueries: 11
         })
       ).rejects.toMatchObject({

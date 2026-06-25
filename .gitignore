@@ -27,10 +27,16 @@ data/
 !.env.example
 secrets/*
 !secrets/accounts.local.example.json
+!secrets/profiles/
+secrets/profiles/*
+!secrets/profiles/*.example.json
+!secrets/prompts/
+secrets/prompts/*
+!secrets/prompts/*.example.md
 config/*.local.json
 
 # Local prompts and generated account material
-prompts/
+/prompts/
 *.local.md
 
 # Logs and temporary files

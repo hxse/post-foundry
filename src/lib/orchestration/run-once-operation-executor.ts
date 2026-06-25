@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import accountsExample from "../../../config/accounts.example.json";
+import { createExampleAccountRegistryConfig } from "../accounts/example-registry";
 import type { AccountInitialPrompt } from "../accounts/account-prompt";
 import {
   createAccountConfigSnapshot,
@@ -86,7 +86,7 @@ function seedFixtureRegistry(
   registry: AccountRegistry;
   account: AccountConfig;
 } {
-  const config = JSON.parse(JSON.stringify(accountsExample)) as typeof accountsExample;
+  const config = createExampleAccountRegistryConfig();
   const rawAccount = config.accounts.find((candidate) => candidate.account_key === accountKey);
   if (!rawAccount) {
     throw executorError(`missing account fixture: ${accountKey}`);
@@ -231,9 +231,7 @@ function createFixturePolicyContext(now: string): AutomationPolicyContext {
   return {
     evaluatedAt: now,
     postedTodayCount: 0,
-    lastPostedAt: "2026-06-23T20:00:00.000Z",
-    publicXRequestsThisMonth: 10,
-    estimatedPublicXRequests: 0
+    lastPostedAt: "2026-06-23T20:00:00.000Z"
   };
 }
 

@@ -33,6 +33,7 @@ const openAiProviderSchema = z
 
 const accountSecretsSchema = z
   .object({
+    profile_path: z.string().trim().min(1).optional(),
     initial_prompt: z.string().trim().min(1).optional(),
     initial_prompt_path: z.string().trim().min(1).optional(),
     providers: z

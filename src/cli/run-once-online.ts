@@ -1,9 +1,8 @@
-import { readFile } from "node:fs/promises";
 import { loadAccountInitialPrompt } from "../lib/accounts/account-prompt";
 import { isApiError } from "../lib/api/errors";
 import { redactSecrets } from "../lib/api/redaction";
 import { resolveAccountCredentials, resolveOpenAiCredentials, resolveTelegramNotificationCredentials } from "../lib/api/secrets";
-import { parseAccountRegistryConfig } from "../lib/accounts/registry";
+import { loadAccountRegistryFromSecretsFile } from "../lib/accounts/registry";
 import { parseProductionOnlineRunOnceArgs } from "../lib/orchestration/production-runner-args";
 import { normalizeProductionPreflightError, runProductionLocalPreflight } from "../lib/orchestration/production-preflight";
 import { createProductionOperationExecutor } from "../lib/orchestration/production-operation-executor";
@@ -16,13 +15,13 @@ import { RuntimeRepository } from "../lib/storage/repositories";
 
 async function main(): Promise<void> {
   const args = parseProductionOnlineRunOnceArgs(process.argv.slice(2));
-  let registry: ReturnType<typeof parseAccountRegistryConfig>;
+  let registry: Awaited<ReturnType<typeof loadAccountRegistryFromSecretsFile>>;
   let credentials: Awaited<ReturnType<typeof resolveAccountCredentials>>;
   let openAiCredentials: Awaited<ReturnType<typeof resolveOpenAiCredentials>>;
   let telegramCredentials: Awaited<ReturnType<typeof resolveTelegramNotificationCredentials>>;
   const loadPrompt = () => loadAccountInitialPrompt({ accountKey: args.account, secretsPath: args.secretsFile });
   try {
-    registry = parseAccountRegistryConfig(JSON.parse(await readFile(args.configFile, "utf8")) as unknown);
+    registry = await loadAccountRegistryFromSecretsFile({ secretsPath: args.secretsFile });
     credentials = await resolveAccountCredentials({ accountKey: args.account, secretsPath: args.secretsFile });
     openAiCredentials = await resolveOpenAiCredentials({ secretsPath: args.secretsFile });
     telegramCredentials = await resolveTelegramNotificationCredentials({ secretsPath: args.secretsFile });
@@ -32,8 +31,7 @@ async function main(): Promise<void> {
       accountCredentials: credentials,
       openAiCredentials,
       telegramCredentials,
-      loadPrompt,
-      env: process.env
+      loadPrompt
     });
     printPreflightResult(preflight);
   } catch (error) {
@@ -67,7 +65,7 @@ async function main(): Promise<void> {
           chatId: telegramCredentials.notificationChannelChatId
         }),
         loadPrompt,
-        maxQueries: args.sourceMaxQueries,
+        maxQueries: args.sourceMaxRequests,
         perQueryLimit: args.sourcePerQueryLimit
       })
     });

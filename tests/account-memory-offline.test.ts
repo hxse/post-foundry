@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import accountsExample from "../config/accounts.example.json";
+import accountsExample from "./fixtures/accounts";
 import type { AccountInitialPrompt } from "../src/lib/accounts/account-prompt";
 import {
   createAccountConfigSnapshot,
@@ -464,9 +464,7 @@ function basePolicyContext() {
   return {
     evaluatedAt: now,
     postedTodayCount: 0,
-    lastPostedAt: "2026-06-22T20:00:00.000Z",
-    publicXRequestsThisMonth: 10,
-    estimatedPublicXRequests: 0
+    lastPostedAt: "2026-06-22T20:00:00.000Z"
   };
 }
 

@@ -1,24 +1,17 @@
-import { resolve } from "node:path";
-
 export type DebugOnlineSourceCollectionArgs = {
   account: string;
   collect: boolean;
-  configFile: string;
-  configFileExplicit: boolean;
   secretsFile?: string;
   dbFile?: string;
-  maxQueries: number;
+  maxRequests: number;
   perQueryLimit: number;
 };
 
-export const defaultDebugOnlineSourceCollectionConfigFile = "config/accounts.example.json";
 
 export function parseDebugOnlineSourceCollectionArgs(argv: string[]): DebugOnlineSourceCollectionArgs {
-  const args: Partial<DebugOnlineSourceCollectionArgs> & Pick<DebugOnlineSourceCollectionArgs, "collect" | "configFile" | "configFileExplicit" | "maxQueries" | "perQueryLimit"> = {
+  const args: Partial<DebugOnlineSourceCollectionArgs> & Pick<DebugOnlineSourceCollectionArgs, "collect" | "maxRequests" | "perQueryLimit"> = {
     collect: false,
-    configFile: defaultDebugOnlineSourceCollectionConfigFile,
-    configFileExplicit: false,
-    maxQueries: 3,
+    maxRequests: 10,
     perQueryLimit: 5
   };
 
@@ -28,15 +21,12 @@ export function parseDebugOnlineSourceCollectionArgs(argv: string[]): DebugOnlin
       args.account = readValue(argv, ++index, "--account");
     } else if (arg === "--collect") {
       args.collect = true;
-    } else if (arg === "--config-file") {
-      args.configFile = readValue(argv, ++index, "--config-file");
-      args.configFileExplicit = true;
     } else if (arg === "--secrets-file") {
       args.secretsFile = readValue(argv, ++index, "--secrets-file");
     } else if (arg === "--db-file") {
       args.dbFile = readValue(argv, ++index, "--db-file");
-    } else if (arg === "--max-queries") {
-      args.maxQueries = readBoundedPositiveInteger(argv, ++index, "--max-queries", 10);
+    } else if (arg === "--max-requests") {
+      args.maxRequests = readBoundedPositiveInteger(argv, ++index, "--max-requests", 10);
     } else if (arg === "--per-query-limit") {
       args.perQueryLimit = readBoundedPositiveInteger(argv, ++index, "--per-query-limit", 10);
     } else {
@@ -47,28 +37,16 @@ export function parseDebugOnlineSourceCollectionArgs(argv: string[]): DebugOnlin
   if (!args.account) {
     throw new Error("--account is required");
   }
-  if (args.collect && !args.configFileExplicit) {
-    throw new Error("--config-file is required when --collect is supplied; do not collect with config/accounts.example.json");
-  }
-  if (args.collect && isExampleConfigFile(args.configFile)) {
-    throw new Error("--config-file must not be config/accounts.example.json when --collect is supplied");
-  }
-
   return {
     account: args.account,
     collect: args.collect,
-    configFile: args.configFile,
-    configFileExplicit: args.configFileExplicit,
     secretsFile: args.secretsFile,
     dbFile: args.dbFile,
-    maxQueries: args.maxQueries,
+    maxRequests: args.maxRequests,
     perQueryLimit: args.perQueryLimit
   };
 }
 
-function isExampleConfigFile(value: string): boolean {
-  return resolve(value) === resolve(defaultDebugOnlineSourceCollectionConfigFile);
-}
 
 function readValue(argv: string[], index: number, flag: string): string {
   const value = argv[index];

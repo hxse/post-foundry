@@ -2,11 +2,11 @@ import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve, join } from "node:path";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import { DatabaseSync } from "node:sqlite";
 import { describe, expect, it } from "vitest";
-import accountsExample from "../config/accounts.example.json";
+import accountsExample from "./fixtures/accounts";
 import { parseAccountRegistryConfig, resolveAccountRef } from "../src/lib/accounts/registry";
 import { parseProductionOnlineRunLoopArgs, parseProductionOnlineRunOnceArgs } from "../src/lib/orchestration/production-runner-args";
 import { runProductionLocalPreflight } from "../src/lib/orchestration/production-preflight";
@@ -18,7 +18,7 @@ import { applyRuntimeMigrations } from "../src/lib/storage/sqlite";
 
 const now = "2026-06-24T04:00:00.000Z";
 const zhAccountUuid = "018f8a6d-7f31-7b0a-a8b2-1c0adca0e001";
-const promptText = "OFFLINE TEST PROMPT: 关注 AI 产品化、开源工具和长期主义表达。";
+const promptText = "账号方向：AI、open_source、frontier_tech。\n发帖原则：自然、具体、可复盘。";
 const execFileAsync = promisify(execFile);
 
 describe("production run-once source context and topic integration", () => {
@@ -27,38 +27,30 @@ describe("production run-once source context and topic integration", () => {
       parseProductionOnlineRunOnceArgs([
         "--account",
         "zh-tech",
-        "--config-file",
-        "config/accounts.local.json",
         "--secrets-file",
         "secrets/accounts.local.json",
         "--db-file",
         "/tmp/post-foundry.sqlite",
-        "--source-max-queries",
+        "--source-max-requests",
         "2",
         "--source-per-query-limit",
         "3"
       ])
     ).toMatchObject({
       account: "zh-tech",
-      configFile: "config/accounts.local.json",
       secretsFile: "secrets/accounts.local.json",
       dbFile: "/tmp/post-foundry.sqlite",
-      sourceMaxQueries: 2,
+      sourceMaxRequests: 2,
       sourcePerQueryLimit: 3
     });
 
-    expect(() => parseProductionOnlineRunOnceArgs(["--account", "zh-tech"])).toThrow(
-      "--config-file is required for production online runs"
-    );
-    expect(() =>
-      parseProductionOnlineRunOnceArgs(["--account", "zh-tech", "--config-file", resolve("config/accounts.example.json")])
-    ).toThrow("--config-file must not be config/accounts.example.json");
-    expect(() =>
-      parseProductionOnlineRunOnceArgs(["--account", "zh-tech", "--config-file", "config/accounts.local.json", "--source-max-queries", "11"])
-    ).toThrow("--source-max-queries must be an integer <= 10");
-    expect(() =>
-      parseProductionOnlineRunLoopArgs(["--account", "zh-tech", "--config-file", "config/accounts.local.json", "--interval-seconds", "299"])
-    ).toThrow("--interval-seconds must be an integer >= 300");
+    expect(parseProductionOnlineRunOnceArgs(["--account", "zh-tech"])).toMatchObject({ account: "zh-tech" });
+    expect(() => parseProductionOnlineRunOnceArgs(["--account", "zh-tech", "--config-file", "config/accounts.local.json"]))
+      .toThrow("Unknown argument: --config-file");
+    expect(() => parseProductionOnlineRunOnceArgs(["--account", "zh-tech", "--source-max-requests", "11"]))
+      .toThrow("--source-max-requests must be an integer <= 10");
+    expect(() => parseProductionOnlineRunLoopArgs(["--account", "zh-tech", "--interval-seconds", "299"]))
+      .toThrow("--interval-seconds must be an integer >= 300");
   });
 
   it("checks local production launch preflight before opening runtime DB or providers", async () => {
@@ -81,9 +73,6 @@ describe("production run-once source context and topic integration", () => {
         telegramCredentials: {
           botToken: "123456:telegram-real-token",
           notificationChannelChatId: "@post_foundry_ops"
-        },
-        env: {
-          POST_FOUNDRY_ALLOW_REAL_X_POST: "1"
         },
         loadPrompt: () => {
           promptLoads += 1;
@@ -119,7 +108,6 @@ describe("production run-once source context and topic integration", () => {
           botToken: "replace-with-telegram-bot-token",
           notificationChannelChatId: "@replace_with_channel_username_or_-100_channel_id"
         },
-        env: {},
         loadPrompt: () => {
           promptLoads += 1;
           return testPrompt();
@@ -137,40 +125,39 @@ describe("production run-once source context and topic integration", () => {
     const cases: Array<{
       name: string;
       account: string;
-      config: unknown;
+      profile?: unknown;
       secrets?: unknown;
     }> = [
       {
         name: "missing secrets",
-        account: "zh-tech",
-        config: productionLaunchConfig()
+        account: "zh-tech"
       },
       {
         name: "missing account",
         account: "missing-account",
-        config: productionLaunchConfig(),
+        profile: productionProfile(),
         secrets: fullProductionSecrets({ withPrompt: true })
       },
       {
         name: "missing prompt",
         account: "zh-tech",
-        config: productionLaunchConfig(),
+        profile: productionProfile(),
         secrets: fullProductionSecrets({ withPrompt: false })
       },
       {
-        name: "bad config",
+        name: "bad profile",
         account: "zh-tech",
-        config: "{not-json",
+        profile: "{not-json",
         secrets: fullProductionSecrets({ withPrompt: true })
       }
     ];
 
     for (const item of cases) {
-      await withProductionCliTempFiles(async ({ configPath, secretsPath, dbPath }) => {
-        if (typeof item.config === "string") {
-          await writeFile(configPath, item.config, "utf8");
-        } else {
-          await writeJson(configPath, item.config);
+      await withProductionCliTempFiles(async ({ profilePath, secretsPath, dbPath }) => {
+        if (typeof item.profile === "string") {
+          await writeFile(profilePath, item.profile, "utf8");
+        } else if (item.profile) {
+          await writeJson(profilePath, item.profile);
         }
         if (item.secrets) {
           await writeJson(secretsPath, item.secrets);
@@ -179,7 +166,6 @@ describe("production run-once source context and topic integration", () => {
         const output = await expectProductionCliFailure({
           script: "src/cli/run-once-online.ts",
           account: item.account,
-          configPath,
           secretsPath,
           dbPath
         });
@@ -193,14 +179,13 @@ describe("production run-once source context and topic integration", () => {
   });
 
   it("normalizes production loop preflight startup failures before creating the runtime DB", async () => {
-    await withProductionCliTempFiles(async ({ configPath, secretsPath, dbPath }) => {
-      await writeJson(configPath, productionLaunchConfig());
+    await withProductionCliTempFiles(async ({ profilePath, secretsPath, dbPath }) => {
+      await writeJson(profilePath, productionProfile());
       await writeJson(secretsPath, fullProductionSecrets({ withPrompt: false }));
 
       const output = await expectProductionCliFailure({
         script: "src/cli/run-loop-online.ts",
         account: "zh-tech",
-        configPath,
         secretsPath,
         dbPath,
         extraArgs: ["--max-iterations", "1"]
@@ -285,30 +270,19 @@ describe("production run-once source context and topic integration", () => {
     }
   });
 
-  it("uses existing API audit usage to skip collection before provider calls", async () => {
+  it("skips collection before provider calls when prompt yields no source queries", async () => {
     const dir = await tempDir();
     const db = openMigratedTestDb();
     try {
       const repo = new RuntimeRepository(db);
       const registry = parseAccountRegistryConfig(accountsExample);
-      const account = resolveAccountRef(registry, { accountKey: "zh-tech" }).account;
-      repo.upsertAccount(account, now);
-      repo.recordApiCallAudit({
-        id: "existing-monthly-usage",
-        accountUuid: account.account_uuid,
-        provider: "twitterapi.io",
-        operation: "public_x_search",
-        status: "succeeded",
-        requestUnits: account.data_sources.public_x.monthly_request_cap,
-        startedAt: now
-      });
       const provider = fakePublicXProvider();
       let promptLoads = 0;
 
       const result = await runOnlineOperationOnce({
         accountKey: "zh-tech",
         lockDir: dir,
-        traceId: "trace-production-source-cap-1",
+        traceId: "trace-production-source-no-query-1",
         now: fixedNow(now),
         enableHeartbeat: false,
         operation: createProductionSourceCollectionExecutor({
@@ -318,28 +292,25 @@ describe("production run-once source context and topic integration", () => {
           provider,
           loadPrompt: () => {
             promptLoads += 1;
-            return testPrompt();
+            return emptyQueryPrompt();
           }
         })
       });
 
-      expect(promptLoads).toBe(0);
+      expect(promptLoads).toBe(1);
       expect(provider.calls).toHaveLength(0);
       expect(result).toMatchObject({
         outcome: "skipped",
         finalAction: "source_collection_skipped",
         summary: {
           source_collection_status: "skipped",
-          skipped_reason: "public_x_request_cap_reached",
+          skipped_reason: "no_source_queries",
           request_units: 0,
           material_count: 0
         }
       });
       expect(repo.listAiRunsForAccount(zhAccountUuid)).toMatchObject([{ status: "skipped" }]);
-      expect(repo.listApiCallAuditForAccount(zhAccountUuid)).toHaveLength(1);
-      expect(repo.listAuditEventsForAccount(zhAccountUuid).map((event) => event.event_type)).toEqual([
-        "public_x_source_collection_skipped"
-      ]);
+      expect(repo.listApiCallAuditForAccount(zhAccountUuid)).toHaveLength(0);
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });
@@ -375,7 +346,7 @@ describe("production run-once source context and topic integration", () => {
         })
       });
 
-      expect(promptLoads).toBe(0);
+      expect(promptLoads).toBe(1);
       expect(provider.calls).toEqual([{ query: "AI", limit: 2 }]);
       expect(result).toMatchObject({
         outcome: "skipped",
@@ -445,6 +416,22 @@ function productionLaunchConfig(): typeof accountsExample {
   return config;
 }
 
+function productionProfile() {
+  return {
+    posting: {
+      cadence_hours: 6,
+      daily_min: 3,
+      daily_max: 4,
+      cooldown_minutes: 90,
+      require_approval: false,
+      real_posting_enabled: true
+    },
+    source: {
+      max_requests_per_run: 10
+    }
+  };
+}
+
 function fullProductionSecrets(input: { withPrompt: boolean }) {
   return {
     version: 1,
@@ -463,6 +450,7 @@ function fullProductionSecrets(input: { withPrompt: boolean }) {
     },
     accounts: {
       "zh-tech": {
+        profile_path: "secrets/profiles/zh-tech.json",
         ...(input.withPrompt ? { initial_prompt: promptText } : {}),
         x_official: {
           access_token: "x-real-token"
@@ -473,15 +461,14 @@ function fullProductionSecrets(input: { withPrompt: boolean }) {
 }
 
 async function withProductionCliTempFiles(
-  body: (paths: { root: string; configPath: string; secretsPath: string; dbPath: string }) => Promise<void>
+  body: (paths: { root: string; profilePath: string; secretsPath: string; dbPath: string }) => Promise<void>
 ): Promise<void> {
   const root = await mkdtemp(join(tmpdir(), "post-foundry-prod-cli-"));
   try {
-    await mkdir(join(root, "config"), { recursive: true });
-    await mkdir(join(root, "secrets"), { recursive: true });
+    await mkdir(join(root, "secrets", "profiles"), { recursive: true });
     await body({
       root,
-      configPath: join(root, "config", "accounts.local.json"),
+      profilePath: join(root, "secrets", "profiles", "zh-tech.json"),
       secretsPath: join(root, "secrets", "accounts.local.json"),
       dbPath: join(root, "runtime.sqlite")
     });
@@ -497,14 +484,12 @@ async function writeJson(path: string, value: unknown): Promise<void> {
 async function expectProductionCliFailure(input: {
   script: string;
   account: string;
-  configPath: string;
   secretsPath: string;
   dbPath: string;
   extraArgs?: string[];
 }): Promise<string> {
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    POST_FOUNDRY_ALLOW_REAL_X_POST: "1"
+    ...process.env
   };
   delete env.TWITTERAPI_IO_API_KEY;
   delete env.X_DEBUG_ACCESS_TOKEN;
@@ -522,8 +507,6 @@ async function expectProductionCliFailure(input: {
         input.script,
         "--account",
         input.account,
-        "--config-file",
-        input.configPath,
         "--secrets-file",
         input.secretsPath,
         "--db-file",
@@ -615,6 +598,21 @@ function emptyPublicXProvider(): PublicXDataProvider & { calls: PublicXSearchInp
       };
     },
     getPostById: async () => undefined
+  };
+}
+
+function emptyQueryPrompt(): {
+  accountKey: string;
+  source: "inline";
+  prompt: string;
+  promptSha256: string;
+} {
+  const prompt = "保持自然表达，避免调试痕迹。";
+  return {
+    accountKey: "zh-tech",
+    source: "inline",
+    prompt,
+    promptSha256: sha256(prompt)
   };
 }
 

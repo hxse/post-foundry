@@ -29,7 +29,6 @@ export type XOfficialPublisherOptions = {
   accessToken?: string;
   fetcher?: FetchLike;
   baseUrl?: string;
-  env?: Partial<Record<string, string | undefined>>;
 };
 
 const createTweetResponseSchema = z
@@ -52,13 +51,11 @@ export class XOfficialPublisherClient {
   private readonly accessToken?: string;
   private readonly fetcher: FetchLike;
   private readonly baseUrl: string;
-  private readonly env: Partial<Record<string, string | undefined>>;
 
   constructor(options: XOfficialPublisherOptions) {
     this.accessToken = options.accessToken;
     this.fetcher = options.fetcher ?? defaultFetch();
     this.baseUrl = options.baseUrl ?? "https://api.x.com";
-    this.env = options.env ?? process.env;
   }
 
   async verifyAccessToken(): Promise<{ status: "ok" }> {
@@ -127,14 +124,6 @@ export class XOfficialPublisherClient {
       };
     }
 
-    if (this.env.POST_FOUNDRY_ALLOW_REAL_X_POST !== "1") {
-      throw new ApiError({
-        code: "real_post_not_allowed",
-        provider: "x_official",
-        stage: "create_post_guard",
-        message: "POST_FOUNDRY_ALLOW_REAL_X_POST must be 1 for real posting"
-      });
-    }
 
     if (!input.text.trim()) {
       throw new ApiError({

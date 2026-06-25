@@ -8,7 +8,7 @@
 
 * `just test-api-offline` 是否作为正式离线 Gate。
 * `just debug-api-online` 是否作为唯一在线 debug 入口，且只能在用户当前明确要求时手动运行。
-* 真实发帖是否必须使用 `POST_FOUNDRY_ALLOW_REAL_X_POST=1`。
+* 真实发帖是否必须使用显式 debug 参数和文案保护。
 * 第一子任务是否暂不实现完整 OAuth UI 和多账号 registry。
 * TwitterAPI.io 是否作为第一版唯一公开 X 数据 provider adapter。
 * 在线、真实外部服务和可能计费的验证是否禁止进入默认测试、CI、定时回归、agent 自主 Close Gate 或自动补验流程。

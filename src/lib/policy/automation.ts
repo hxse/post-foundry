@@ -127,8 +127,14 @@ export function evaluateAutomationPolicy(input: EvaluateAutomationPolicyInput): 
     addReason(reasons, "excluded_topic", "block", `candidate matches excluded topic: ${topicMatch.excluded.join(", ")}`);
   }
 
-  addCheck(checks, "topic_inclusion", topicMatch.included.length > 0, "candidate must match at least one account topic");
-  if (topicMatch.included.length === 0) {
+  const topicInclusionRequired = input.account.topics.include.length > 0;
+  addCheck(
+    checks,
+    "topic_inclusion",
+    !topicInclusionRequired || topicMatch.included.length > 0,
+    topicInclusionRequired ? "candidate must match at least one account topic" : "structured include topics are disabled for this account"
+  );
+  if (topicInclusionRequired && topicMatch.included.length === 0) {
     addReason(reasons, "missing_included_topic", "block", "candidate does not match account topics");
   }
 

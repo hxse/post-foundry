@@ -102,7 +102,7 @@ const accountLocalProfileSchema = z
     source: z
       .object({
         enabled: z.boolean().default(true),
-        max_requests_per_run: z.number().int().positive().max(10).default(10)
+        max_requests_per_run: z.number().int().positive().max(30).default(30)
       })
       .strict()
   })

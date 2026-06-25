@@ -2,7 +2,7 @@
 
 ## Production Preflight
 
-`prod-online-run-once` and `prod-online-run-loop` must run a local-only preflight before opening the runtime SQLite DB or constructing real provider clients. The preflight may read local config, local secrets and the local account prompt, but it must not call OpenAI, TwitterAPI.io, X official API, Telegram, news sites, browsers, MCP browser, Playwright, or `x.com`.
+`prod-online-run-once` and `prod-online-run-loop` must run a local-only preflight before opening the runtime SQLite DB or constructing real provider clients. The preflight may read local config, local secrets and the local account prompt, but it must not call Codex model generation, TwitterAPI.io, X official API, Telegram, news sites, browsers, MCP browser, Playwright, or `x.com`.
 
 Preflight must require:
 
@@ -12,7 +12,8 @@ Preflight must require:
 * public X per-run source request cap is greater than 0;
 * `posting.real_posting_enabled` is true for v0 launch runs;
 * usable TwitterAPI.io API key;
-* usable OpenAI API key;
+* local Codex CLI is installed and logged in;
+* no OpenAI API key is required for draft generation;
 * usable X official access token;
 * usable Telegram bot token and notification channel;
 * account initial prompt loads from local secrets and exposes a prompt sha256.
@@ -57,6 +58,6 @@ just local-runtime-health
 
 ## Boundaries
 
-Default validation remains offline only: `just check`, `just test`, and focused `test-offline-*` commands. Agent Close Gate must not run production, online debug, OAuth, OpenAI, TwitterAPI.io, Telegram, X official API, real posting, browser automation, or `x.com`.
+Default validation remains offline only: `just check`, `just test`, and focused `test-offline-*` commands. Agent Close Gate must not run production, online debug, OAuth, real Codex model calls, TwitterAPI.io, Telegram, X official API, real posting, browser automation, or `x.com`.
 
 If a production run posts successfully, readback verification must use TwitterAPI.io by tweet id. Browser fallback to `x.com` remains forbidden.

@@ -22,7 +22,7 @@
 ## Provider Boundaries
 
 * Public X read: only through `PublicXDataProvider` / TwitterAPI.io adapter.
-* LLM draft: through OpenAI Responses API provider or injected fake provider in offline tests.
+* LLM draft: through the local Codex CLI provider in production or injected fake provider in offline tests.
 * X write: only through X official API publisher.
 * Manual notification: only through Telegram Bot API notifier.
 * No browser, MCP browser, Playwright, `x.com` page access, cookie, login state or anti-detect automation.
@@ -47,7 +47,7 @@ Prompt plaintext must not be written to runtime ledger. Ledger may store prompt 
 * Account `posting.real_posting_enabled` must pass policy before X auto post.
 * Linked or over-280-character drafts route to Telegram human notification.
 * Online/cost-bearing commands are manual only; default tests must stay offline.
-* V0 does not implement dollar-cost budgeting; OpenAI usage is stored as token metadata, and TwitterAPI.io is guarded by request-count caps.
+* V0 does not implement dollar-cost budgeting; Codex draft runs are audited by provider/model metadata, and TwitterAPI.io is guarded by per-run request-count caps.
 
 ## Acceptance
 
@@ -58,4 +58,4 @@ Focused offline tests must prove:
 * formatted draft is blocked before policy and final providers.
 * source skipped / empty stops before prompt loading, LLM, Telegram and X providers.
 * prompt plaintext is absent from stored AI runs.
-* OpenAI/TwitterAPI.io API audit rows are recorded by provider and operation.
+* Codex/TwitterAPI.io API audit rows are recorded by provider and operation.

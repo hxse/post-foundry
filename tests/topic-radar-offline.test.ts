@@ -65,6 +65,50 @@ describe("topic radar baseline", () => {
     expect(context.materials.map((material) => material.id)).toContain("material-ai-agent-x");
   });
 
+  it("derives account-scoped topics from prompt when profile topics are empty", () => {
+    const baseAccount = accountByKey("zh-tech");
+    const account: AccountConfig = {
+      ...baseAccount,
+      topics: {
+        include: [],
+        exclude: baseAccount.topics.exclude
+      }
+    };
+    const prompt = promptFromText("zh-tech", "账号方向：前沿科技、AI\n发帖原则：自然、具体、可复盘。");
+
+    const radar = buildTopicRadar({
+      account,
+      configSnapshot: accountSnapshot("zh-tech"),
+      prompt,
+      materials: [
+        {
+          id: "material-frontier-tech",
+          accountUuid: account.account_uuid,
+          sourceType: "public_x_post",
+          provider: "twitterapi.io",
+          sourceRef: "tweet:frontier-tech",
+          title: "前沿科技 breakthrough",
+          text: "前沿科技的新进展正在影响 AI 工具和开发者工作流。",
+          capturedAt: "2026-06-23T07:45:00.000Z",
+          topicTags: [],
+          engagement: {
+            likeCount: 500,
+            repostCount: 80,
+            replyCount: 20,
+            bookmarkCount: 90,
+            viewCount: 80_000
+          }
+        }
+      ],
+      recentPosts: [],
+      observedAt: now
+    });
+
+    expect(radar.account.topics.include).toContain("前沿科技");
+    expect(radar.selectedTopic.label).toBe("前沿科技");
+    expect(radar.selectedTopic.keywords).toEqual(expect.arrayContaining(["前沿科技"]));
+  });
+
   it("suppresses recently repeated topics and selects an alternative", () => {
     const account = accountByKey("zh-tech");
     const radar = buildTopicRadar({
@@ -325,6 +369,15 @@ function initialPrompt(accountKey: string): AccountInitialPrompt {
     source: "inline",
     prompt: promptText,
     promptSha256: sha256(promptText)
+  };
+}
+
+function promptFromText(accountKey: string, prompt: string): AccountInitialPrompt {
+  return {
+    accountKey,
+    source: "inline",
+    prompt,
+    promptSha256: sha256(prompt)
   };
 }
 

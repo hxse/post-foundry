@@ -4,6 +4,7 @@ import type { AccountInitialPrompt } from "../accounts/account-prompt";
 import type { AccountConfig, AccountConfigSnapshot } from "../accounts/registry";
 import { ApiError } from "../api/errors";
 import type { CandidateTopic, DraftEvidenceMaterial, DraftEvidenceSourceType, RecentAccountPost } from "../drafts/ai-posting-pipeline";
+import { derivePublicXSearchQueriesFromPrompt } from "../context/source-queries";
 import type { RecentPostInput, SourceEngagementMetrics, SourceMaterialInput } from "../context/source-ingestion";
 import type { RuntimeRepository } from "../storage/repositories";
 
@@ -298,6 +299,7 @@ export function buildTopicRadar(input: BuildTopicRadarInput): TopicRadarPackage 
     })
   );
   const recentPosts = parseWithSchema(z.array(recentPostInputSchema), input.recentPosts, "recent account posts are invalid");
+  const accountTopics = accountTopicsForRadar(input.account, input.prompt);
   assertUnique(parsedMaterials.map((material) => material.id), "source material id");
   assertUnique(recentPosts.map((post) => post.id), "recent post id");
 
@@ -315,7 +317,7 @@ export function buildTopicRadar(input: BuildTopicRadarInput): TopicRadarPackage 
       continue;
     }
 
-    const accountTopicMatches = input.account.topics.include.filter((topic) => materialMatchesTopic(material, topic));
+    const accountTopicMatches = accountTopics.include.filter((topic) => materialMatchesTopic(material, topic));
     if (accountTopicMatches.length === 0) {
       continue;
     }
@@ -390,10 +392,7 @@ export function buildTopicRadar(input: BuildTopicRadarInput): TopicRadarPackage 
       configHash: input.configSnapshot.config_hash,
       configSnapshotId: input.configSnapshotId,
       language: input.account.language,
-      topics: {
-        include: input.account.topics.include,
-        exclude: input.account.topics.exclude
-      }
+      topics: accountTopics
     },
     prompt: {
       source: input.prompt.source,
@@ -569,6 +568,15 @@ function buildCandidateFromGroup(input: {
       accountTopicMatches: [...input.group.accountTopicMatches],
       topMaterialId: topMaterial.material.id
     }
+  };
+}
+
+function accountTopicsForRadar(account: AccountConfig, prompt: AccountInitialPrompt): AccountConfig["topics"] {
+  const promptTopics = derivePublicXSearchQueriesFromPrompt(prompt, { maxQueries: 10 });
+  const include = account.topics.include.length > 0 ? account.topics.include : promptTopics;
+  return {
+    include: uniqueStrings(include),
+    exclude: account.topics.exclude
   };
 }
 

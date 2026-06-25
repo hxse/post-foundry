@@ -12,6 +12,7 @@ export type PublicXSourceCollectionSkipReason =
   | "account_disabled"
   | "public_x_disabled"
   | "no_source_queries";
+export type PublicXSourceCollectionStoppedReason = "rate_limited";
 
 export type PublicXSourceCollectionInput = {
   repo: RuntimeRepository;
@@ -34,6 +35,7 @@ export type PublicXSourceCollectionResult = {
   provider: "twitterapi.io";
   status: PublicXSourceCollectionStatus;
   skippedReason?: PublicXSourceCollectionSkipReason;
+  stoppedReason?: PublicXSourceCollectionStoppedReason;
   queries: string[];
   apiAuditIds: string[];
   requestUnits: number;
@@ -45,7 +47,7 @@ export type PublicXSourceCollectionResult = {
 const nonEmptyStringSchema = z.string().trim().min(1);
 const isoDateTimeSchema = z.string().datetime();
 const positiveIntegerSchema = z.number().int().positive();
-const defaultMaxQueries = 3;
+const defaultMaxQueries = 30;
 const defaultPerQueryLimit = 5;
 
 export async function collectAccountPublicXSourceBatch(input: PublicXSourceCollectionInput): Promise<PublicXSourceCollectionResult> {
@@ -78,6 +80,7 @@ export async function collectAccountPublicXSourceBatch(input: PublicXSourceColle
   const seenMaterialIds = new Set<string>();
   let rawCount = 0;
   let duplicateMaterialCount = 0;
+  let stoppedReason: PublicXSourceCollectionStoppedReason | undefined;
 
   try {
     for (const [index, query] of queries.entries()) {
@@ -106,9 +109,15 @@ export async function collectAccountPublicXSourceBatch(input: PublicXSourceColle
       }
     }
   } catch (error) {
-    tryRecordFailedCollectionLedger({ ...parsed, queries, apiAuditIds, error });
-    throw error;
+    if (shouldStopWithPartialCollection(error, materials)) {
+      stoppedReason = "rate_limited";
+    } else {
+      tryRecordFailedCollectionLedger({ ...parsed, queries, apiAuditIds, error });
+      throw error;
+    }
   }
+
+  const attemptedQueries = queries.slice(0, apiAuditIds.length);
 
   const result: PublicXSourceCollectionResult = {
     kind: "public_x_source_collection_v1",
@@ -116,7 +125,8 @@ export async function collectAccountPublicXSourceBatch(input: PublicXSourceColle
     accountKey: parsed.account.account_key,
     provider: "twitterapi.io",
     status: "succeeded",
-    queries,
+    stoppedReason,
+    queries: attemptedQueries,
     apiAuditIds,
     requestUnits: apiAuditIds.length,
     rawCount,
@@ -139,8 +149,8 @@ function parseInput(input: PublicXSourceCollectionInput): Required<Pick<PublicXS
   const collectedAt = parseIsoDateTime(input.collectedAt, "collectedAt");
   const maxQueries = parsePositiveInteger(input.maxQueries ?? defaultMaxQueries, "maxQueries");
   const perQueryLimit = parsePositiveInteger(input.perQueryLimit ?? defaultPerQueryLimit, "perQueryLimit");
-  if (maxQueries > 10) {
-    throw sourceCollectionError("maxQueries must be <= 10");
+  if (maxQueries > 30) {
+    throw sourceCollectionError("maxQueries must be <= 30");
   }
   if (perQueryLimit > 10) {
     throw sourceCollectionError("perQueryLimit must be <= 10");
@@ -215,6 +225,7 @@ function recordCollectionLedger(input: {
       output: {
         status: input.result.status,
         skipped_reason: input.result.skippedReason,
+        stopped_reason: input.result.stoppedReason,
         queries: input.result.queries,
         api_audit_ids: input.result.apiAuditIds,
         request_units: input.result.requestUnits,
@@ -262,6 +273,7 @@ function recordCollectionLedger(input: {
         provider: "twitterapi.io",
         status: input.result.status,
         skipped_reason: input.result.skippedReason,
+        stopped_reason: input.result.stoppedReason,
         query_count: input.result.queries.length,
         material_count: input.result.materials.length,
         request_units: input.result.requestUnits,
@@ -337,6 +349,10 @@ function tryRecordFailedCollectionLedger(input: {
   } catch {
     // Keep the original provider/adapter error as the surfaced failure.
   }
+}
+
+function shouldStopWithPartialCollection(error: unknown, materials: SourceMaterialInput[]): boolean {
+  return materials.length > 0 && error instanceof ApiError && error.provider === "twitterapi.io" && error.code === "rate_limited";
 }
 
 function sourceTopicTags(account: AccountConfig, query: string): string[] {

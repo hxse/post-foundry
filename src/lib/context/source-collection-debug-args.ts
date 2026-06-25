@@ -11,7 +11,7 @@ export type DebugOnlineSourceCollectionArgs = {
 export function parseDebugOnlineSourceCollectionArgs(argv: string[]): DebugOnlineSourceCollectionArgs {
   const args: Partial<DebugOnlineSourceCollectionArgs> & Pick<DebugOnlineSourceCollectionArgs, "collect" | "maxRequests" | "perQueryLimit"> = {
     collect: false,
-    maxRequests: 10,
+    maxRequests: 30,
     perQueryLimit: 5
   };
 
@@ -26,7 +26,7 @@ export function parseDebugOnlineSourceCollectionArgs(argv: string[]): DebugOnlin
     } else if (arg === "--db-file") {
       args.dbFile = readValue(argv, ++index, "--db-file");
     } else if (arg === "--max-requests") {
-      args.maxRequests = readBoundedPositiveInteger(argv, ++index, "--max-requests", 10);
+      args.maxRequests = readBoundedPositiveInteger(argv, ++index, "--max-requests", 30);
     } else if (arg === "--per-query-limit") {
       args.perQueryLimit = readBoundedPositiveInteger(argv, ++index, "--per-query-limit", 10);
     } else {

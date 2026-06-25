@@ -90,7 +90,7 @@ export type DuplicateCheckResult = {
 };
 
 export type DraftPostingGateReason = {
-  code: "post_text_too_long" | "formatted_post_text" | "debug_post_text" | "recent_duplicate";
+  code: "post_text_too_long" | "formatted_post_text" | "debug_post_text" | "stilted_post_text" | "recent_duplicate";
   message: string;
 };
 
@@ -231,10 +231,15 @@ export function createDraftRunInputPackage(input: {
     throw pipelineError("initial prompt belongs to a different account_key");
   }
 
-  const topic = parseWithSchema(candidateTopicSchema, input.topic, "candidate topic is invalid");
+  const parsedTopic = parseWithSchema(candidateTopicSchema, input.topic, "candidate topic is invalid");
+  const topic: CandidateTopic = {
+    ...parsedTopic,
+    keywords: parsedTopic.keywords ?? []
+  };
   const materials = parseWithSchema(z.array(evidenceMaterialSchema).min(1), input.materials, "draft materials are invalid");
   assertUnique(materials.map((material) => material.id), "material id");
   const recentPosts = parseWithSchema(z.array(recentAccountPostSchema), input.recentPosts, "recent account posts are invalid");
+  const accountTopics = accountTopicsForDraft(input.account, topic);
 
   return {
     kind: "ai_posting_draft_input_v1",
@@ -245,7 +250,7 @@ export function createDraftRunInputPackage(input: {
       configHash: input.configSnapshot.config_hash,
       configSnapshotId: input.configSnapshotId,
       language: input.account.language,
-      topics: input.account.topics,
+      topics: accountTopics,
       style: input.account.style
     },
     prompt: {
@@ -267,6 +272,14 @@ export function createDraftRunInputPackage(input: {
       requireRecentDuplicateCheck: true,
       linkHandling: "links_route_to_human_review_downstream"
     }
+  };
+}
+
+function accountTopicsForDraft(account: AccountConfig, topic: CandidateTopic): AccountConfig["topics"] {
+  const include = account.topics.include.length > 0 ? account.topics.include : [topic.label, ...(topic.keywords ?? [])];
+  return {
+    include: uniqueStrings(include),
+    exclude: account.topics.exclude
   };
 }
 
@@ -511,7 +524,48 @@ function findExternalPostTextViolations(text: string): DraftPostingGateReason[] 
     });
   }
 
+  const stiltedViolation = findStiltedPostTextViolation(text);
+  if (stiltedViolation) {
+    reasons.push({
+      code: "stilted_post_text",
+      message: stiltedViolation
+    });
+  }
+
   return reasons;
+}
+
+function findStiltedPostTextViolation(text: string): string | undefined {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  const reportTemplatePatterns = [
+    /最容易被(?:想成|理解成|看成).{0,30}(?:其实|本质上)?更像/u,
+    /时间表.{0,16}(?:看着|看起来|听起来)远.{0,24}(?:并不|不算|没那么)宽裕/u,
+    /(?:不是|不只是).{0,24}而是.{0,28}(?:工程问题|资产盘点|系统工程|节奏问题)/u
+  ];
+  const reportTemplateHits = reportTemplatePatterns.filter((pattern) => pattern.test(normalized)).length;
+  if (reportTemplateHits > 0) {
+    return "external X post_text sounds like a report or consulting summary; rewrite as a shorter human observation";
+  }
+
+  const formalTerms = [
+    "迁移",
+    "资产盘点",
+    "供应商",
+    "时间表",
+    "政府和大企业",
+    "企业 IT",
+    "长期保密",
+    "攻防假设",
+    "系统工程",
+    "工程问题",
+    "节奏变了"
+  ];
+  const formalHitCount = formalTerms.filter((term) => normalized.includes(term)).length;
+  if (formalHitCount >= 4) {
+    return "external X post_text is too formal for automatic posting; rewrite with fewer report-like nouns";
+  }
+
+  return undefined;
 }
 
 function sanitizeWritableDraftRunInputPackage(inputPackage: DraftRunInputPackage): DraftRunInputPackage {

@@ -1,45 +1,49 @@
 import { loadAccountInitialPrompt } from "../lib/accounts/account-prompt";
 import { isApiError } from "../lib/api/errors";
 import { redactSecrets } from "../lib/api/redaction";
-import { resolveAccountCredentials, resolveOpenAiCredentials, resolveTelegramNotificationCredentials } from "../lib/api/secrets";
+import { resolveAccountCredentials, resolveTelegramNotificationCredentials } from "../lib/api/secrets";
 import { loadAccountRegistryFromSecretsFile } from "../lib/accounts/registry";
 import { parseProductionOnlineRunOnceArgs } from "../lib/orchestration/production-runner-args";
 import { normalizeProductionPreflightError, runProductionLocalPreflight } from "../lib/orchestration/production-preflight";
 import { createProductionOperationExecutor } from "../lib/orchestration/production-operation-executor";
 import { runOnlineOperationOnce } from "../lib/orchestration/online-runner";
 import { TwitterApiIoPublicXAdapter } from "../lib/providers/twitterapi-io";
-import { OpenAiResponsesDraftGenerator } from "../lib/providers/openai-draft-generator";
+import { checkCodexCliRuntime, CodexCliDraftGenerator } from "../lib/providers/codex-draft-generator";
 import { TelegramNotifier } from "../lib/providers/telegram-notifier";
 import { XOfficialPublisherClient } from "../lib/providers/x-official-publisher";
 import { RuntimeRepository } from "../lib/storage/repositories";
+import { printCliProgress } from "./progress-log";
 
 async function main(): Promise<void> {
   const args = parseProductionOnlineRunOnceArgs(process.argv.slice(2));
+  printCliProgress({ event: "prod_online_run_once.start", fields: { account: args.account } });
   let registry: Awaited<ReturnType<typeof loadAccountRegistryFromSecretsFile>>;
   let credentials: Awaited<ReturnType<typeof resolveAccountCredentials>>;
-  let openAiCredentials: Awaited<ReturnType<typeof resolveOpenAiCredentials>>;
   let telegramCredentials: Awaited<ReturnType<typeof resolveTelegramNotificationCredentials>>;
   const loadPrompt = () => loadAccountInitialPrompt({ accountKey: args.account, secretsPath: args.secretsFile });
   try {
+    printCliProgress({ event: "production_preflight.local_files.start", fields: { secrets_file: args.secretsFile } });
     registry = await loadAccountRegistryFromSecretsFile({ secretsPath: args.secretsFile });
     credentials = await resolveAccountCredentials({ accountKey: args.account, secretsPath: args.secretsFile });
-    openAiCredentials = await resolveOpenAiCredentials({ secretsPath: args.secretsFile });
     telegramCredentials = await resolveTelegramNotificationCredentials({ secretsPath: args.secretsFile });
     const preflight = await runProductionLocalPreflight({
       registry,
       accountKey: args.account,
       accountCredentials: credentials,
-      openAiCredentials,
       telegramCredentials,
-      loadPrompt
+      checkCodexRuntime: () => checkCodexCliRuntime({ cwd: process.cwd(), onProgress: printCliProgress }),
+      loadPrompt,
+      onProgress: printCliProgress
     });
     printPreflightResult(preflight);
   } catch (error) {
     throw normalizeProductionPreflightError(error);
   }
 
+  printCliProgress({ event: "runtime_db.open.start", fields: { db_file: args.dbFile } });
   const { openRuntimeDatabase } = await import("../lib/storage/sqlite");
   const db = openRuntimeDatabase({ path: args.dbFile });
+  printCliProgress({ event: "runtime_db.open.ok", fields: { db_file: args.dbFile } });
 
   try {
     const repo = new RuntimeRepository(db);
@@ -49,15 +53,17 @@ async function main(): Promise<void> {
       lockTtlSeconds: args.lockTtlSeconds,
       lockWaitTimeoutSeconds: args.lockWaitTimeoutSeconds,
       lockPollIntervalMs: args.lockPollIntervalMs,
+      onProgress: printCliProgress,
       operation: createProductionOperationExecutor({
         repo,
         registry,
         accountKey: args.account,
         publicXProvider: new TwitterApiIoPublicXAdapter({ apiKey: credentials.twitterApiIoApiKey }),
-        draftGenerator: new OpenAiResponsesDraftGenerator({
-          apiKey: openAiCredentials.apiKey,
-          model: openAiCredentials.model,
-          baseUrl: openAiCredentials.baseUrl
+        draftGenerator: new CodexCliDraftGenerator({
+          cwd: process.cwd(),
+          sessionDir: args.codexSessionDir,
+          sessionMaxAgeHours: args.codexSessionMaxAgeHours,
+          onProgress: printCliProgress
         }),
         autoPoster: new XOfficialPublisherClient({ accessToken: credentials.xOfficialAccessToken }),
         notificationSender: new TelegramNotifier({
@@ -66,7 +72,9 @@ async function main(): Promise<void> {
         }),
         loadPrompt,
         maxQueries: args.sourceMaxRequests,
-        perQueryLimit: args.sourcePerQueryLimit
+        perQueryLimit: args.sourcePerQueryLimit,
+        oneTimePrompt: args.oneTimePrompt,
+        onProgress: printCliProgress
       })
     });
 
@@ -80,6 +88,8 @@ function printPreflightResult(result: Awaited<ReturnType<typeof runProductionLoc
   console.log("production_preflight=ready");
   console.log("account_uuid=" + result.accountUuid);
   console.log("prompt_sha256=" + result.promptSha256);
+  console.log("codex_runtime=ready");
+  console.log("codex_version=" + result.codexRuntime.version);
 }
 
 function printRunResult(

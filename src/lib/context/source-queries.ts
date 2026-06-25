@@ -6,11 +6,8 @@ export type PublicXSourceQueryOptions = {
   maxQueries?: number;
 };
 
-const defaultMaxQueries = 10;
+const defaultMaxQueries = 30;
 const directionLinePattern = /(?:账号方向|账号定位|关注方向|内容方向|选题方向|主题方向|领域)\s*[：:]\s*(.+)/;
-const hashtagPattern = /#[\p{L}\p{N}_-]+/gu;
-const quotedTermPattern = /[“"]([^”"]{2,48})[”"]/g;
-const asciiTokenPattern = /\b[A-Za-z][A-Za-z0-9+.#-]{1,31}\b/g;
 const genericAsciiTokens = new Set([
   "postfoundry",
   "debug",
@@ -52,14 +49,6 @@ export function derivePublicXSearchQueriesFromPrompt(
       candidates.push(...splitTopicText(match[1]));
     }
   }
-
-  candidates.push(...(prompt.match(hashtagPattern) ?? []).map((tag) => tag.slice(1)));
-
-  for (const match of prompt.matchAll(quotedTermPattern)) {
-    candidates.push(match[1]);
-  }
-
-  candidates.push(...(prompt.match(asciiTokenPattern) ?? []));
 
   return uniqueStrings(
     candidates

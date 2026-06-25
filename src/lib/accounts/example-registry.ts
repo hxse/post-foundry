@@ -45,7 +45,7 @@ const exampleAccountRegistryConfig = {
         "public_x": {
           "provider": "twitterapi.io",
           "enabled": true,
-          "max_requests_per_run": 10
+          "max_requests_per_run": 30
         }
       },
       "style": {
@@ -94,7 +94,7 @@ const exampleAccountRegistryConfig = {
         "public_x": {
           "provider": "twitterapi.io",
           "enabled": true,
-          "max_requests_per_run": 10
+          "max_requests_per_run": 30
         }
       },
       "style": {

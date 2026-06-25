@@ -2,15 +2,19 @@ import { resolveAccountRef, type AccountRegistry } from "../accounts/registry";
 import type { AccountInitialPrompt } from "../accounts/account-prompt";
 import { ApiError, isApiError, type ApiErrorCode } from "../api/errors";
 import { derivePublicXSearchQueriesFromPrompt } from "../context/source-queries";
-import { isPlaceholderSecretValue, type AccountCredentials, type OpenAiCredentials, type TelegramNotificationCredentials } from "../api/secrets";
+import { isPlaceholderSecretValue, type AccountCredentials, type TelegramNotificationCredentials } from "../api/secrets";
+import { reportProgress, type ProgressReporter } from "../progress";
+import type { CodexCliRuntimeCheck } from "../providers/codex-draft-generator";
 
 export type ProductionLocalPreflightInput = {
   registry: AccountRegistry;
   accountKey: string;
+  mode?: "production" | "draft_preview";
   accountCredentials: AccountCredentials;
-  openAiCredentials: OpenAiCredentials;
   telegramCredentials: TelegramNotificationCredentials;
+  checkCodexRuntime: () => Promise<CodexCliRuntimeCheck> | CodexCliRuntimeCheck;
   loadPrompt: () => Promise<AccountInitialPrompt> | AccountInitialPrompt;
+  onProgress?: ProgressReporter;
 };
 
 export type ProductionLocalPreflightResult = {
@@ -18,6 +22,10 @@ export type ProductionLocalPreflightResult = {
   accountKey: string;
   accountUuid: string;
   promptSha256: string;
+  codexRuntime: {
+    command: string;
+    version: string;
+  };
   checks: ProductionLocalPreflightCheck[];
 };
 
@@ -36,9 +44,13 @@ type PreflightFailure = {
 };
 
 export async function runProductionLocalPreflight(input: ProductionLocalPreflightInput): Promise<ProductionLocalPreflightResult> {
+  reportProgress(input.onProgress, "production_preflight.start", { account: input.accountKey });
+  const mode = input.mode ?? "production";
   let account: ReturnType<typeof resolveAccountRef>["account"];
   try {
+    reportProgress(input.onProgress, "production_preflight.resolve_account.start", { account: input.accountKey });
     account = resolveAccountRef(input.registry, { accountKey: input.accountKey }).account;
+    reportProgress(input.onProgress, "production_preflight.resolve_account.ok", { account_uuid: account.account_uuid });
   } catch (error) {
     throw normalizeProductionPreflightError(error);
   }
@@ -64,49 +76,48 @@ export async function runProductionLocalPreflight(input: ProductionLocalPrefligh
     detail: "public X max_requests_per_run must be greater than 0"
   });
   addCheck(checks, failures, {
-    key: "real_posting_enabled",
-    passed: account.posting.real_posting_enabled,
-    kind: "invalid_request",
-    detail: "account posting.real_posting_enabled must be true for v0 launch runs"
-  });
-  addCheck(checks, failures, {
     key: "twitterapi_io_api_key",
     passed: isUsable(input.accountCredentials.twitterApiIoApiKey),
     kind: "missing_credentials",
-    detail: "TwitterAPI.io API key is required for source collection and post readback"
+    detail: "TwitterAPI.io API key is required for source collection"
   });
-  addCheck(checks, failures, {
-    key: "openai_api_key",
-    passed: isUsable(input.openAiCredentials.apiKey),
-    kind: "missing_credentials",
-    detail: "OpenAI API key is required for production draft generation"
-  });
-  addCheck(checks, failures, {
-    key: "x_official_access_token",
-    passed: isUsable(input.accountCredentials.xOfficialAccessToken),
-    kind: "missing_credentials",
-    detail: "X official access token is required because policy may choose auto-post"
-  });
-  addCheck(checks, failures, {
-    key: "telegram_bot_token",
-    passed: isUsable(input.telegramCredentials.botToken),
-    kind: "missing_credentials",
-    detail: "Telegram bot token is required because policy may choose human review"
-  });
-  addCheck(checks, failures, {
-    key: "telegram_notification_channel",
-    passed: isUsable(input.telegramCredentials.notificationChannelChatId),
-    kind: "missing_credentials",
-    detail: "Telegram notification channel is required because policy may choose human review"
-  });
+  if (mode === "production") {
+    addCheck(checks, failures, {
+      key: "real_posting_enabled",
+      passed: account.posting.real_posting_enabled,
+      kind: "invalid_request",
+      detail: "account posting.real_posting_enabled must be true for v0 launch runs"
+    });
+    addCheck(checks, failures, {
+      key: "x_official_access_token",
+      passed: isUsable(input.accountCredentials.xOfficialAccessToken),
+      kind: "missing_credentials",
+      detail: "X official access token is required because policy may choose auto-post"
+    });
+    addCheck(checks, failures, {
+      key: "telegram_bot_token",
+      passed: isUsable(input.telegramCredentials.botToken),
+      kind: "missing_credentials",
+      detail: "Telegram bot token is required because policy may choose human review"
+    });
+    addCheck(checks, failures, {
+      key: "telegram_notification_channel",
+      passed: isUsable(input.telegramCredentials.notificationChannelChatId),
+      kind: "missing_credentials",
+      detail: "Telegram notification channel is required because policy may choose human review"
+    });
+  }
 
   if (failures.length > 0) {
     throw preflightError(failures);
   }
 
+
   let prompt: AccountInitialPrompt;
   try {
+    reportProgress(input.onProgress, "production_preflight.prompt.start", { account: input.accountKey });
     prompt = await input.loadPrompt();
+    reportProgress(input.onProgress, "production_preflight.prompt.ok", { prompt_sha256: prompt.promptSha256 });
   } catch (error) {
     throw normalizeProductionPreflightError(error);
   }
@@ -117,6 +128,7 @@ export async function runProductionLocalPreflight(input: ProductionLocalPrefligh
     detail: "account initial prompt must load from local secrets and expose a sha256 hash"
   });
   const sourceQueries = derivePublicXSearchQueriesFromPrompt(prompt);
+  reportProgress(input.onProgress, "production_preflight.source_queries.ok", { query_count: sourceQueries.length });
   addCheck(checks, failures, {
     key: "public_x_source_queries",
     passed: sourceQueries.length > 0,
@@ -128,11 +140,35 @@ export async function runProductionLocalPreflight(input: ProductionLocalPrefligh
     throw preflightError(failures);
   }
 
+  let codexRuntime: CodexCliRuntimeCheck;
+  try {
+    reportProgress(input.onProgress, "production_preflight.codex_runtime.start", { may_download_or_update: true });
+    codexRuntime = await input.checkCodexRuntime();
+    reportProgress(input.onProgress, "production_preflight.codex_runtime.ok", { version: codexRuntime.version });
+  } catch (error) {
+    throw normalizeProductionPreflightError(error);
+  }
+  addCheck(checks, failures, {
+    key: "codex_cli_runtime",
+    passed: codexRuntime.status === "ready",
+    kind: "missing_credentials",
+    detail: "Codex CLI must be installed and logged in for production draft generation"
+  });
+
+  if (failures.length > 0) {
+    throw preflightError(failures);
+  }
+
+  reportProgress(input.onProgress, "production_preflight.ok", { account: account.account_key });
   return {
     status: "ready",
     accountKey: account.account_key,
     accountUuid: account.account_uuid,
     promptSha256: prompt.promptSha256,
+    codexRuntime: {
+      command: codexRuntime.command,
+      version: codexRuntime.version
+    },
     checks
   };
 }

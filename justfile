@@ -20,6 +20,9 @@ test-offline-account-memory: _node-for-vitest
 test-offline-llm-draft-adapter: _node-for-vitest
     bun run test:llm-draft-adapter-offline
 
+test-offline-codex-draft-generator: _node-for-vitest
+    bun run test:codex-draft-generator-offline
+
 test-offline-api: _node-for-vitest
     bun run test:api-offline
 
@@ -106,6 +109,12 @@ local-codex-status: _codex-cli
 local-codex-doctor: _codex-cli
     codex doctor --summary --ascii
 
+# LOCAL CODEX: forget the stored Codex session id for one account. Next production draft opens a new Codex session.
+[arg("account", long="account")]
+[arg("codex_session_dir", long="codex-session-dir")]
+local-codex-reset-session account codex_session_dir="data/codex-sessions":
+    bun run src/cli/reset-codex-session.ts --account "{{ account }}" --codex-session-dir "{{ codex_session_dir }}"
+
 # ----------------------------------------------------------------------
 # Offline debug: fixture/stub data only, may write local SQLite, no external API
 # ----------------------------------------------------------------------
@@ -130,9 +139,25 @@ debug-online-source-collection *ARGS:
 debug-online-telegram *ARGS:
     bun run src/cli/debug-tg-online.ts {{ARGS}}
 
+# REAL API: TwitterAPI.io + Codex draft preview. Never posts to X and never sends Telegram.
+[arg("account", long="account")]
+[arg("secrets_file", long="secrets-file")]
+[arg("db_file", long="db-file")]
+[arg("source_max_requests", long="source-max-requests")]
+[arg("source_per_query_limit", long="source-per-query-limit")]
+[arg("one_time_prompt", long="one-time-prompt")]
+[arg("codex_session_dir", long="codex-session-dir")]
+[arg("codex_session_max_age_hours", long="codex-session-max-age-hours")]
+[arg("lock_dir", long="lock-dir")]
+[arg("lock_ttl_seconds", long="lock-ttl-seconds")]
+[arg("lock_wait_timeout_seconds", long="lock-wait-timeout-seconds")]
+[arg("lock_poll_interval_ms", long="lock-poll-interval-ms")]
+debug-online-post-preview account secrets_file="secrets/accounts.local.json" db_file="data/post-foundry.sqlite" source_max_requests="30" source_per_query_limit="5" one_time_prompt="" codex_session_dir="data/codex-sessions" codex_session_max_age_hours="" lock_dir="data/locks" lock_ttl_seconds="7200" lock_wait_timeout_seconds="7200" lock_poll_interval_ms="1000": _node-for-vitest
+    @set -- --account "{{ account }}" --secrets-file "{{ secrets_file }}" --db-file "{{ db_file }}" --source-max-requests "{{ source_max_requests }}" --source-per-query-limit "{{ source_per_query_limit }}" --codex-session-dir "{{ codex_session_dir }}" --lock-dir "{{ lock_dir }}" --lock-ttl-seconds "{{ lock_ttl_seconds }}" --lock-wait-timeout-seconds "{{ lock_wait_timeout_seconds }}" --lock-poll-interval-ms "{{ lock_poll_interval_ms }}"; if [ -n "{{ codex_session_max_age_hours }}" ]; then set -- "$@" --codex-session-max-age-hours "{{ codex_session_max_age_hours }}"; fi; if [ -n "{{ one_time_prompt }}" ]; then set -- "$@" --one-time-prompt "{{ one_time_prompt }}"; fi; node_modules/.bin/vite-node src/cli/debug-online-post-preview.ts "$@"
+
 # REAL CODEX: calls Codex once to verify logged-in runtime access. Manual only; may consume quota.
 debug-online-codex-smoke prompt="只输出 codex-ok，不运行命令，不读取文件。": _codex-cli
-    codex exec --ephemeral --sandbox read-only "{{ prompt }}"
+    codex --ask-for-approval never exec --ephemeral --sandbox read-only "{{ prompt }}"
 
 # REAL API: X OAuth token refresh/exchange. Writes secrets.
 debug-online-x-token-refresh *ARGS:
@@ -152,12 +177,15 @@ debug-online-x-token-auth *ARGS:
 [arg("db_file", long="db-file")]
 [arg("source_max_requests", long="source-max-requests")]
 [arg("source_per_query_limit", long="source-per-query-limit")]
+[arg("one_time_prompt", long="one-time-prompt")]
+[arg("codex_session_dir", long="codex-session-dir")]
+[arg("codex_session_max_age_hours", long="codex-session-max-age-hours")]
 [arg("lock_dir", long="lock-dir")]
 [arg("lock_ttl_seconds", long="lock-ttl-seconds")]
 [arg("lock_wait_timeout_seconds", long="lock-wait-timeout-seconds")]
 [arg("lock_poll_interval_ms", long="lock-poll-interval-ms")]
-prod-online-run-once account secrets_file="secrets/accounts.local.json" db_file="data/post-foundry.sqlite" source_max_requests="10" source_per_query_limit="5" lock_dir="data/locks" lock_ttl_seconds="7200" lock_wait_timeout_seconds="7200" lock_poll_interval_ms="1000":
-    bun run src/cli/run-once-online.ts --account "{{ account }}" --secrets-file "{{ secrets_file }}" --db-file "{{ db_file }}" --source-max-requests "{{ source_max_requests }}" --source-per-query-limit "{{ source_per_query_limit }}" --lock-dir "{{ lock_dir }}" --lock-ttl-seconds "{{ lock_ttl_seconds }}" --lock-wait-timeout-seconds "{{ lock_wait_timeout_seconds }}" --lock-poll-interval-ms "{{ lock_poll_interval_ms }}"
+prod-online-run-once account secrets_file="secrets/accounts.local.json" db_file="data/post-foundry.sqlite" source_max_requests="30" source_per_query_limit="5" one_time_prompt="" codex_session_dir="data/codex-sessions" codex_session_max_age_hours="" lock_dir="data/locks" lock_ttl_seconds="7200" lock_wait_timeout_seconds="7200" lock_poll_interval_ms="1000": _node-for-vitest
+    @set -- --account "{{ account }}" --secrets-file "{{ secrets_file }}" --db-file "{{ db_file }}" --source-max-requests "{{ source_max_requests }}" --source-per-query-limit "{{ source_per_query_limit }}" --codex-session-dir "{{ codex_session_dir }}" --lock-dir "{{ lock_dir }}" --lock-ttl-seconds "{{ lock_ttl_seconds }}" --lock-wait-timeout-seconds "{{ lock_wait_timeout_seconds }}" --lock-poll-interval-ms "{{ lock_poll_interval_ms }}"; if [ -n "{{ codex_session_max_age_hours }}" ]; then set -- "$@" --codex-session-max-age-hours "{{ codex_session_max_age_hours }}"; fi; if [ -n "{{ one_time_prompt }}" ]; then set -- "$@" --one-time-prompt "{{ one_time_prompt }}"; fi; node_modules/.bin/vite-node src/cli/run-once-online.ts "$@"
 
 # PROD ONLINE: loop v0 operation cycles with real external APIs. May auto-post when account policy allows it.
 [arg("account", long="account")]
@@ -165,6 +193,8 @@ prod-online-run-once account secrets_file="secrets/accounts.local.json" db_file=
 [arg("db_file", long="db-file")]
 [arg("source_max_requests", long="source-max-requests")]
 [arg("source_per_query_limit", long="source-per-query-limit")]
+[arg("codex_session_dir", long="codex-session-dir")]
+[arg("codex_session_max_age_hours", long="codex-session-max-age-hours")]
 [arg("lock_dir", long="lock-dir")]
 [arg("lock_ttl_seconds", long="lock-ttl-seconds")]
 [arg("lock_wait_timeout_seconds", long="lock-wait-timeout-seconds")]
@@ -173,5 +203,5 @@ prod-online-run-once account secrets_file="secrets/accounts.local.json" db_file=
 [arg("jitter_seconds", long="jitter-seconds")]
 [arg("sleep_utc", long="sleep-utc")]
 [arg("max_iterations", long="max-iterations")]
-prod-online-run-loop account secrets_file="secrets/accounts.local.json" db_file="data/post-foundry.sqlite" source_max_requests="10" source_per_query_limit="5" lock_dir="data/locks" lock_ttl_seconds="7200" lock_wait_timeout_seconds="7200" lock_poll_interval_ms="1000" interval_seconds="28800" jitter_seconds="0" sleep_utc="" max_iterations="":
-    set -- --account "{{ account }}" --secrets-file "{{ secrets_file }}" --db-file "{{ db_file }}" --source-max-requests "{{ source_max_requests }}" --source-per-query-limit "{{ source_per_query_limit }}" --lock-dir "{{ lock_dir }}" --lock-ttl-seconds "{{ lock_ttl_seconds }}" --lock-wait-timeout-seconds "{{ lock_wait_timeout_seconds }}" --lock-poll-interval-ms "{{ lock_poll_interval_ms }}" --interval-seconds "{{ interval_seconds }}" --jitter-seconds "{{ jitter_seconds }}"; if [ -n "{{ sleep_utc }}" ]; then set -- "$@" --sleep-utc "{{ sleep_utc }}"; fi; if [ -n "{{ max_iterations }}" ]; then set -- "$@" --max-iterations "{{ max_iterations }}"; fi; bun run src/cli/run-loop-online.ts "$@"
+prod-online-run-loop account secrets_file="secrets/accounts.local.json" db_file="data/post-foundry.sqlite" source_max_requests="30" source_per_query_limit="5" codex_session_dir="data/codex-sessions" codex_session_max_age_hours="" lock_dir="data/locks" lock_ttl_seconds="7200" lock_wait_timeout_seconds="7200" lock_poll_interval_ms="1000" interval_seconds="28800" jitter_seconds="0" sleep_utc="" max_iterations="": _node-for-vitest
+    @set -- --account "{{ account }}" --secrets-file "{{ secrets_file }}" --db-file "{{ db_file }}" --source-max-requests "{{ source_max_requests }}" --source-per-query-limit "{{ source_per_query_limit }}" --codex-session-dir "{{ codex_session_dir }}" --lock-dir "{{ lock_dir }}" --lock-ttl-seconds "{{ lock_ttl_seconds }}" --lock-wait-timeout-seconds "{{ lock_wait_timeout_seconds }}" --lock-poll-interval-ms "{{ lock_poll_interval_ms }}" --interval-seconds "{{ interval_seconds }}" --jitter-seconds "{{ jitter_seconds }}"; if [ -n "{{ codex_session_max_age_hours }}" ]; then set -- "$@" --codex-session-max-age-hours "{{ codex_session_max_age_hours }}"; fi; if [ -n "{{ sleep_utc }}" ]; then set -- "$@" --sleep-utc "{{ sleep_utc }}"; fi; if [ -n "{{ max_iterations }}" ]; then set -- "$@" --max-iterations "{{ max_iterations }}"; fi; node_modules/.bin/vite-node src/cli/run-loop-online.ts "$@"

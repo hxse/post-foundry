@@ -37,7 +37,9 @@ const twitterApiIoTweetLookupResponseSchema = z
   .object({
     tweets: z.array(twitterApiIoTweetSchema),
     status: z.enum(["success", "error"]),
-    message: z.string()
+    message: z.string().optional(),
+    msg: z.string().optional(),
+    code: z.number().optional()
   })
   .passthrough();
 
@@ -204,10 +206,11 @@ export class TwitterApiIoPublicXAdapter implements PublicXDataProvider {
         code: "provider_error",
         provider: "twitterapi.io",
         stage: "tweet_lookup_response",
-        message: `TwitterAPI.io tweet lookup returned error: ${parsed.data.message}`,
+        message: `TwitterAPI.io tweet lookup returned error: ${parsed.data.message ?? parsed.data.msg ?? "unknown error"}`,
         details: {
           status: parsed.data.status,
-          message: parsed.data.message
+          message: parsed.data.message ?? parsed.data.msg,
+          code: parsed.data.code
         }
       });
     }

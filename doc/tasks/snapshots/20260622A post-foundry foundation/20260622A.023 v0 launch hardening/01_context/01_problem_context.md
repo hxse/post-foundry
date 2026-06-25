@@ -7,7 +7,7 @@ Before trying it on a real account, the highest-value work is not another featur
 The main risks for first trial are:
 
 * accidentally running with example or placeholder secrets;
-* reaching the production loop with missing OpenAI, TwitterAPI.io, X official, Telegram, or prompt configuration;
+* reaching the production loop with missing Codex CLI login, TwitterAPI.io, X official, Telegram, or prompt configuration;
 * forgetting the explicit real-posting environment guard;
 * confusing offline tests, online debug commands, and production commands;
 * losing the no-browser X boundary during troubleshooting.

@@ -34,23 +34,34 @@ describe("production run-once source context and topic integration", () => {
         "--source-max-requests",
         "2",
         "--source-per-query-limit",
-        "3"
+        "3",
+        "--codex-session-dir",
+        "/tmp/post-foundry-codex-sessions",
+        "--codex-session-max-age-hours",
+        "72",
+        "--one-time-prompt",
+        "临时选题方向：BTC ETF"
       ])
     ).toMatchObject({
       account: "zh-tech",
       secretsFile: "secrets/accounts.local.json",
       dbFile: "/tmp/post-foundry.sqlite",
       sourceMaxRequests: 2,
-      sourcePerQueryLimit: 3
+      sourcePerQueryLimit: 3,
+      codexSessionDir: "/tmp/post-foundry-codex-sessions",
+      codexSessionMaxAgeHours: 72,
+      oneTimePrompt: "临时选题方向：BTC ETF"
     });
 
     expect(parseProductionOnlineRunOnceArgs(["--account", "zh-tech"])).toMatchObject({ account: "zh-tech" });
     expect(() => parseProductionOnlineRunOnceArgs(["--account", "zh-tech", "--config-file", "config/accounts.local.json"]))
       .toThrow("Unknown argument: --config-file");
-    expect(() => parseProductionOnlineRunOnceArgs(["--account", "zh-tech", "--source-max-requests", "11"]))
-      .toThrow("--source-max-requests must be an integer <= 10");
+    expect(() => parseProductionOnlineRunOnceArgs(["--account", "zh-tech", "--source-max-requests", "31"]))
+      .toThrow("--source-max-requests must be an integer <= 30");
     expect(() => parseProductionOnlineRunLoopArgs(["--account", "zh-tech", "--interval-seconds", "299"]))
       .toThrow("--interval-seconds must be an integer >= 300");
+    expect(() => parseProductionOnlineRunLoopArgs(["--account", "zh-tech", "--one-time-prompt", "临时提示"]))
+      .toThrow("Unknown argument: --one-time-prompt");
   });
 
   it("checks local production launch preflight before opening runtime DB or providers", async () => {
@@ -66,14 +77,11 @@ describe("production run-once source context and topic integration", () => {
           twitterApiIoApiKey: "tw-real-key",
           xOfficialAccessToken: "x-real-token"
         },
-        openAiCredentials: {
-          apiKey: "openai-real-key",
-          model: "gpt-5.4"
-        },
         telegramCredentials: {
           botToken: "123456:telegram-real-token",
           notificationChannelChatId: "@post_foundry_ops"
         },
+        checkCodexRuntime: () => readyCodexRuntime(),
         loadPrompt: () => {
           promptLoads += 1;
           return testPrompt();
@@ -85,6 +93,38 @@ describe("production run-once source context and topic integration", () => {
       accountUuid: zhAccountUuid,
       promptSha256: sha256(promptText)
     });
+    expect(promptLoads).toBe(1);
+  });
+
+  it("allows draft preview preflight without X posting or Telegram credentials", async () => {
+    const registry = parseAccountRegistryConfig(accountsExample);
+    let promptLoads = 0;
+
+    const result = await runProductionLocalPreflight({
+      mode: "draft_preview",
+      registry,
+      accountKey: "zh-tech",
+      accountCredentials: {
+        accountKey: "zh-tech",
+        twitterApiIoApiKey: "tw-real-key"
+      },
+      telegramCredentials: {},
+      checkCodexRuntime: () => readyCodexRuntime(),
+      loadPrompt: () => {
+        promptLoads += 1;
+        return testPrompt();
+      }
+    });
+
+    expect(result).toMatchObject({
+      status: "ready",
+      accountKey: "zh-tech",
+      accountUuid: zhAccountUuid,
+      promptSha256: sha256(promptText)
+    });
+    expect(result.checks.map((check) => check.key)).not.toEqual(
+      expect.arrayContaining(["real_posting_enabled", "x_official_access_token", "telegram_bot_token", "telegram_notification_channel"])
+    );
     expect(promptLoads).toBe(1);
   });
 
@@ -101,13 +141,11 @@ describe("production run-once source context and topic integration", () => {
           twitterApiIoApiKey: "replace-with-twitterapi-io-api-key",
           xOfficialAccessToken: "replace-with-x-oauth-access-token"
         },
-        openAiCredentials: {
-          apiKey: "replace-with-openai-api-key"
-        },
         telegramCredentials: {
           botToken: "replace-with-telegram-bot-token",
           notificationChannelChatId: "@replace_with_channel_username_or_-100_channel_id"
         },
+        checkCodexRuntime: () => readyCodexRuntime(),
         loadPrompt: () => {
           promptLoads += 1;
           return testPrompt();
@@ -427,7 +465,7 @@ function productionProfile() {
       real_posting_enabled: true
     },
     source: {
-      max_requests_per_run: 10
+      max_requests_per_run: 30
     }
   };
 }
@@ -438,10 +476,6 @@ function fullProductionSecrets(input: { withPrompt: boolean }) {
     global_providers: {
       twitterapi_io: {
         api_key: "tw-real-key"
-      },
-      openai: {
-        api_key: "openai-real-key",
-        model: "gpt-5.4"
       },
       telegram: {
         bot_token: "123456:telegram-real-token",
@@ -494,8 +528,6 @@ async function expectProductionCliFailure(input: {
   delete env.TWITTERAPI_IO_API_KEY;
   delete env.X_DEBUG_ACCESS_TOKEN;
   delete env.X_DEBUG_REFRESH_TOKEN;
-  delete env.OPENAI_API_KEY;
-  delete env.OPENAI_MODEL;
   delete env.TELEGRAM_BOT_TOKEN;
   delete env.TELEGRAM_NOTIFICATION_CHANNEL_CHAT_ID;
 
@@ -647,4 +679,13 @@ async function tempDir(): Promise<string> {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function readyCodexRuntime() {
+  return {
+    status: "ready" as const,
+    command: "codex",
+    version: "codex test",
+    loginStatus: "logged in"
+  };
 }

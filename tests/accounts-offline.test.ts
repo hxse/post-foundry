@@ -19,7 +19,7 @@ describe("account registry and config isolation", () => {
     const zh = resolveAccountRef(registry, { accountKey: "zh-tech" });
 
     expect(zh.account.account_uuid).toBe("018f8a6d-7f31-7b0a-a8b2-1c0adca0e001");
-    expect(zh.account.data_sources.public_x.max_requests_per_run).toBe(10);
+    expect(zh.account.data_sources.public_x.max_requests_per_run).toBe(30);
     expect(zh.account.data_sources.public_x.provider).toBe("twitterapi.io");
     expect(zh.xIdentity?.oauth_token_status).toBe("missing");
 

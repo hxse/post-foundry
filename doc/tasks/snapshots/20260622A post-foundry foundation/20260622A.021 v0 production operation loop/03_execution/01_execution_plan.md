@@ -2,7 +2,7 @@
 
 1. Add production draft generator boundary.
    * Keep offline tests fake-provider only.
-   * Add OpenAI Responses API provider for production CLI.
+   * Add production draft provider for production CLI. Superseded by `.025`, which uses Codex CLI instead of OpenAI API.
 
 2. Add production operation executor.
    * Reuse source collection, topic radar, source context, account memory, draft gate, policy, Telegram and X publisher modules.

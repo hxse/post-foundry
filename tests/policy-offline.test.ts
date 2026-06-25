@@ -32,6 +32,34 @@ describe("automation policy engine", () => {
     expect(decision.reasons.map((reason) => reason.code)).toEqual(["policy_passed"]);
   });
 
+  it("allows prompt-driven accounts without structured include topics", () => {
+    const baseAccount = withRealPostingEnabled(accountByKey("zh-tech"));
+    const account: AccountConfig = {
+      ...baseAccount,
+      topics: {
+        include: [],
+        exclude: baseAccount.topics.exclude
+      }
+    };
+
+    const decision = evaluateAutomationPolicy({
+      account,
+      candidate: {
+        id: "candidate-prompt-topic-1",
+        text: "AI 对网络安全的影响，真正值得关注的是攻防节奏正在变快。",
+        topicTags: ["前沿科技", "AI", "网络安全"]
+      },
+      context: baseContext()
+    });
+
+    expect(decision.outcome).toBe("auto_post");
+    expect(decision.reasons.map((reason) => reason.code)).toEqual(["policy_passed"]);
+    expect(decision.checks.find((check) => check.key === "topic_inclusion")).toMatchObject({
+      passed: true,
+      detail: "structured include topics are disabled for this account"
+    });
+  });
+
   it("routes link posts to Telegram human gate", () => {
     const account = withRealPostingEnabled(accountByKey("zh-tech"));
     const decision = evaluateAutomationPolicy({

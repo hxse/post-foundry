@@ -34,12 +34,16 @@ PostFoundry 的 X 边界固定为：
 
 ## Codex Runtime Boundary
 
-PostFoundry production drafting is intended to use the Codex CLI runtime available in the current environment, not an OpenAI API-key draft service. In Podman or other containers, the only supported auth setup is logging in inside that container with `just local-codex-login`, which runs `codex login --device-auth`. Do not document or implement copying host `~/.codex/auth.json`, bind-mounting the host `.codex` directory, or using OpenAI API-key auth as the supported path for this project.
+PostFoundry production drafting uses the Codex CLI runtime available in the current environment, not an OpenAI API-key draft service. In Podman or other containers, the only supported auth setup is logging in inside that container with `just local-codex-login`, which runs `codex login --device-auth`. Do not document or implement copying host `~/.codex/auth.json`, bind-mounting the host `.codex` directory, or using OpenAI API-key auth as the supported path for this project.
 
-Use `just local-codex-version` and `just local-codex-status` for local checks. `just debug-online-codex-smoke` performs a real Codex model call and is manual-only.
+Use `just local-codex-version` and `just local-codex-status` for local checks. `just debug-online-codex-smoke` performs a real Codex model call and is manual-only. Production draft generation also calls `codex exec`; default tests and Close Gate must use fake/offline runners rather than real Codex calls.
+
+Production Codex drafting must reuse one Codex CLI session per account by default for both once and loop entrypoints. PostFoundry may store local session metadata with account key, Codex thread id, and timestamp, but must not store prompt plaintext, source materials, drafts, or secrets in that session metadata. Session ids do not expire by default; age-based reset is opt-in through `--codex-session-max-age-hours`. `just local-codex-reset-session --account ...` is the supported immediate reset path when an account needs a fresh Codex conversation.
+
+`prod-online-run-once` may accept a one-time operator prompt for a single manual run. Treat it as temporary context for source collection and drafting, not as persistent account strategy. Do not add one-time prompt support to the loop entrypoint.
 
 ## Online And Cost-Bearing Runs
 
-在线测试、真实外部服务调用和可能计费的命令不得自动化运行。`just debug-api-online`、`just x-token`、`just x-token-auth`、X OAuth token endpoint 调用、真实发帖、第三方 API 读回验证和任何 TwitterAPI.io / X official 在线请求，都只能在用户当前明确要求时手动执行。
+在线测试、真实外部服务调用和可能计费的命令不得自动化运行。`debug-online-*`、`prod-online-*`、`debug-online-codex-smoke`、`codex exec` 真实模型调用、X OAuth token endpoint 调用、真实发帖、第三方 API 读回验证和任何 TwitterAPI.io / X official 在线请求，都只能在用户当前明确要求时手动执行。
 
-这些命令不得进入默认 `just test`、CI、定时回归、"run all"、agent 自主 Close Gate 或自动补验流程。默认验证只允许使用离线入口，例如 `just check`、`just test` 和 `just test-api-offline`。如果在线验证没有执行，报告应写清未执行原因和残余风险，而不是自动调用付费或真实 API 补齐。
+这些命令不得进入默认 `just test`、CI、定时回归、"run all"、agent 自主 Close Gate 或自动补验流程。默认验证只允许使用离线入口，例如 `just check`、`just test` 和 `test-offline-*`。如果在线验证没有执行，报告应写清未执行原因和残余风险，而不是自动调用付费或真实 API 补齐。

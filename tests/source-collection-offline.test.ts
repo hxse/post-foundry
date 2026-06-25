@@ -4,6 +4,7 @@ import accountsExample from "./fixtures/accounts";
 import { parseAccountRegistryConfig, resolveAccountRef, type AccountConfig } from "../src/lib/accounts/registry";
 import { ApiError } from "../src/lib/api/errors";
 import { parseDebugOnlineSourceCollectionArgs } from "../src/lib/context/source-collection-debug-args";
+import { derivePublicXSearchQueriesFromPrompt } from "../src/lib/context/source-queries";
 import { collectAccountPublicXSourceBatch } from "../src/lib/context/source-collection";
 import type { PublicXDataProvider, PublicXSearchInput } from "../src/lib/providers/public-x";
 import { RuntimeRepository } from "../src/lib/storage/repositories";
@@ -12,6 +13,21 @@ import { applyRuntimeMigrations } from "../src/lib/storage/sqlite";
 const now = "2026-06-24T04:00:00.000Z";
 
 describe("production source collection v0", () => {
+  it("derives public X source queries only from explicit topic direction lines", () => {
+    const queries = derivePublicXSearchQueriesFromPrompt(
+      [
+        "账号方向：前沿科技、AI 进展、BTC、美股 AI 相关股票。",
+        "语气要求：学习参考账号的“情绪氛围”，不要冷冰冰，也不要写 PostFoundry debug test。",
+        "不要使用‘时间表看着远……并不宽裕’这种报告模板。",
+        "X 数据只能通过 TwitterAPI.io API 获取。"
+      ].join("\n"),
+      { maxQueries: 30 }
+    );
+
+    expect(queries).toEqual(["前沿科技", "AI 进展", "BTC", "美股 AI 相关股票"]);
+    expect(queries).not.toEqual(expect.arrayContaining(["情绪氛围", "PostFoundry", "debug", "test", "TwitterAPI.io", "API"]));
+  });
+
   it("parses online source collection debug args with explicit collect guardrails", () => {
     expect(
       parseDebugOnlineSourceCollectionArgs([
@@ -41,8 +57,8 @@ describe("production source collection v0", () => {
   it("rejects unsafe online source collection debug args before side effects", () => {
     expect(() => parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--config-file", "config/accounts.local.json"]))
       .toThrow("Unknown argument: --config-file");
-    expect(() => parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--max-requests", "11"]))
-      .toThrow("--max-requests must be an integer <= 10");
+    expect(() => parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--max-requests", "31"]))
+      .toThrow("--max-requests must be an integer <= 30");
     expect(() => parseDebugOnlineSourceCollectionArgs(["--account", "zh-tech", "--per-query-limit", "11"]))
       .toThrow("--per-query-limit must be an integer <= 10");
   });
@@ -274,6 +290,85 @@ describe("production source collection v0", () => {
     }
   });
 
+  it("continues with partial materials when a later provider call is rate limited", async () => {
+    const db = openMigratedTestDb();
+    try {
+      const { repo, account } = seedAccounts(db);
+      const baseProvider = fakePublicXProvider();
+      const providerError = new ApiError({
+        code: "rate_limited",
+        provider: "twitterapi.io",
+        stage: "search_response",
+        message: "rate limited"
+      });
+      const provider: PublicXDataProvider & { calls: PublicXSearchInput[] } = {
+        calls: baseProvider.calls,
+        searchPosts: async (input) => {
+          if (input.query === "open_source") {
+            baseProvider.calls.push(input);
+            throw providerError;
+          }
+          return baseProvider.searchPosts(input);
+        },
+        getPostById: async () => undefined
+      };
+
+      const result = await collectAccountPublicXSourceBatch({
+        repo,
+        account,
+        provider,
+        traceId: "trace-source-collection-partial-1",
+        runId: "source-collection-partial-run-1",
+        auditEventId: "source-collection-partial-event-1",
+        collectedAt: now,
+        sourceQueries: ["AI", "open_source", "frontier_tech"],
+        maxQueries: 3,
+        perQueryLimit: 2
+      });
+
+      expect(provider.calls).toEqual([
+        { query: "AI", limit: 2 },
+        { query: "open_source", limit: 2 }
+      ]);
+      expect(result).toMatchObject({
+        status: "succeeded",
+        stoppedReason: "rate_limited",
+        queries: ["AI", "open_source"],
+        apiAuditIds: ["source-collection-partial-run-1:api:1", "source-collection-partial-run-1:api:2"],
+        requestUnits: 2,
+        rawCount: 2,
+        duplicateMaterialCount: 0
+      });
+      expect(result.materials.map((material) => material.id)).toEqual(["public-x:tweet-shared", "public-x:tweet-ai-only"]);
+      expect(repo.listApiCallAuditForAccount(account.account_uuid)).toMatchObject([
+        {
+          id: "source-collection-partial-run-1:api:1",
+          status: "succeeded"
+        },
+        {
+          id: "source-collection-partial-run-1:api:2",
+          status: "failed"
+        }
+      ]);
+      const runOutput = JSON.parse(repo.listAiRunsForAccount(account.account_uuid)[0].output_json ?? "{}");
+      expect(runOutput).toMatchObject({
+        status: "succeeded",
+        stopped_reason: "rate_limited",
+        request_units: 2,
+        material_count: 2
+      });
+      const auditMetadata = JSON.parse(repo.listAuditEventsForAccount(account.account_uuid)[0].metadata_json ?? "{}");
+      expect(auditMetadata).toMatchObject({
+        status: "succeeded",
+        stopped_reason: "rate_limited",
+        request_units: 2,
+        material_count: 2
+      });
+    } finally {
+      db.close();
+    }
+  });
+
   it("rejects invalid collection limits before provider calls", async () => {
     const db = openMigratedTestDb();
     try {
@@ -290,7 +385,7 @@ describe("production source collection v0", () => {
           auditEventId: "source-collection-invalid-event-1",
           collectedAt: now,
           sourceQueries: ["AI"],
-          maxQueries: 11
+          maxQueries: 31
         })
       ).rejects.toMatchObject({
         provider: "local",

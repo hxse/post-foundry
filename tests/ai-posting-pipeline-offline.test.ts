@@ -50,6 +50,56 @@ describe("AI posting pipeline baseline", () => {
     expect(serialized).not.toContain("SECRET ACCOUNT PROMPT");
   });
 
+  it("keeps draft input valid when account profile omits structured topics", () => {
+    const registry = parseAccountRegistryConfig(accountsExample);
+    const baseAccount = resolveAccountRef(registry, { accountKey: "zh-tech" }).account;
+    const account: AccountConfig = {
+      ...baseAccount,
+      topics: {
+        include: [],
+        exclude: baseAccount.topics.exclude
+      }
+    };
+    const snapshot = createAccountConfigSnapshot({
+      registry,
+      ref: { accountKey: "zh-tech" },
+      capturedAt: now
+    });
+    const prompt: AccountInitialPrompt = {
+      accountKey: "zh-tech",
+      source: "inline",
+      prompt: promptText,
+      promptSha256: sha256(promptText)
+    };
+
+    const inputPackage = createDraftRunInputPackage({
+      account,
+      configSnapshot: snapshot,
+      prompt,
+      topic: {
+        id: "topic-frontier-tech",
+        label: "前沿科技",
+        reason: "prompt-derived topic selected from public X materials",
+        keywords: ["前沿科技", "AI"]
+      },
+      materials: draftMaterials(),
+      recentPosts: []
+    });
+
+    expect(inputPackage.account.topics.include).toEqual(["前沿科技", "AI"]);
+    expect(() =>
+      parseAiPostingDraftOutput({
+        inputPackage,
+        output: {
+          draft_id: "draft-frontier-tech",
+          post_text: "真正值得关注的前沿科技，不只是概念新，而是能不能把人的判断成本降下来。",
+          topic_tags: ["前沿科技", "AI"],
+          evidence_ids: ["material-hot-post-1"]
+        }
+      })
+    ).not.toThrow();
+  });
+
   it("parses natural draft output and prepares a policy candidate", () => {
     const { inputPackage } = buildDraftInputPackage();
     const draft = parseAiPostingDraftOutput({
@@ -95,6 +145,22 @@ describe("AI posting pipeline baseline", () => {
 
     expect(gate.status).toBe("blocked");
     expect(gate.status === "blocked" ? gate.reasons.map((reason) => reason.code) : []).toContain("formatted_post_text");
+
+    const stiltedDraft = parseAiPostingDraftOutput({
+      inputPackage,
+      output: {
+        draft_id: "draft-stilted-1",
+        post_text: "后量子密码学迁移最容易被想成算法升级，其实更像一次全网资产盘点：哪些系统在用旧加密、哪些数据要长期保密、哪些供应商会拖慢节奏。2030/2031 这种时间表看着远，放到政府和大企业 IT 里并不宽裕。",
+        topic_tags: ["前沿科技", "AI"],
+        evidence_ids: ["material-hot-post-1"]
+      }
+    });
+    const stiltedGate = evaluateDraftForPosting({
+      draft: stiltedDraft,
+      recentPosts: inputPackage.recentPosts
+    });
+    expect(stiltedGate.status).toBe("blocked");
+    expect(stiltedGate.status === "blocked" ? stiltedGate.reasons.map((reason) => reason.code) : []).toContain("stilted_post_text");
 
     const debugDraft = parseAiPostingDraftOutput({
       inputPackage,

@@ -122,7 +122,7 @@ describe("api offline contract", () => {
   it("reports missing tweet lookup as provider indexing delay", async () => {
     const adapter = new TwitterApiIoPublicXAdapter({
       apiKey: "tw-secret-token",
-      fetcher: okJson(() => ({ status: "success", message: "success", tweets: [] }))
+      fetcher: okJson(() => ({ status: "success", msg: "success", code: 200, tweets: [] }))
     });
 
     await expect(adapter.getPostById("tweet-1")).resolves.toBeUndefined();

@@ -11,9 +11,11 @@ export type ProductionSourceCollectionArgs = {
   dbFile?: string;
   sourceMaxRequests: number;
   sourcePerQueryLimit: number;
+  codexSessionDir?: string;
+  codexSessionMaxAgeHours?: number;
 };
 
-export type ProductionOnlineRunOnceArgs = ProductionSourceCollectionArgs & {
+export type ProductionOnlineBaseArgs = ProductionSourceCollectionArgs & {
   account: string;
   lockDir?: string;
   lockTtlSeconds: number;
@@ -21,7 +23,11 @@ export type ProductionOnlineRunOnceArgs = ProductionSourceCollectionArgs & {
   lockPollIntervalMs: number;
 };
 
-export type ProductionOnlineRunLoopArgs = ProductionOnlineRunOnceArgs & {
+export type ProductionOnlineRunOnceArgs = ProductionOnlineBaseArgs & {
+  oneTimePrompt?: string;
+};
+
+export type ProductionOnlineRunLoopArgs = ProductionOnlineBaseArgs & {
   intervalSeconds: number;
   jitterSeconds: number;
   sleepUtc?: string;
@@ -31,7 +37,15 @@ export type ProductionOnlineRunLoopArgs = ProductionOnlineRunOnceArgs & {
 
 export function parseProductionOnlineRunOnceArgs(argv: string[]): ProductionOnlineRunOnceArgs {
   const args: Partial<ProductionOnlineRunOnceArgs> = defaultProductionArgs();
-  parseCommonArgs(argv, args);
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--one-time-prompt") {
+      args.oneTimePrompt = readTrimmedValue(argv, index + 1, "--one-time-prompt");
+      index += 1;
+    } else {
+      index = parseCommonArg(argv, index, args);
+    }
+  }
   return finalizeRunOnceArgs(args);
 }
 
@@ -68,7 +82,7 @@ export function parseProductionOnlineRunLoopArgs(argv: string[]): ProductionOnli
 
 function defaultProductionArgs(): Partial<ProductionOnlineRunOnceArgs> {
   return {
-    sourceMaxRequests: 10,
+    sourceMaxRequests: 30,
     sourcePerQueryLimit: 5,
     lockTtlSeconds: defaultOnlineOperationLockTtlSeconds,
     lockPollIntervalMs: defaultOnlineOperationLockPollIntervalMs
@@ -96,11 +110,19 @@ function parseCommonArg(argv: string[], index: number, args: Partial<ProductionO
     return index + 1;
   }
   if (arg === "--source-max-requests") {
-    args.sourceMaxRequests = readBoundedPositiveInteger(argv, index + 1, "--source-max-requests", 10);
+    args.sourceMaxRequests = readBoundedPositiveInteger(argv, index + 1, "--source-max-requests", 30);
     return index + 1;
   }
   if (arg === "--source-per-query-limit") {
     args.sourcePerQueryLimit = readBoundedPositiveInteger(argv, index + 1, "--source-per-query-limit", 10);
+    return index + 1;
+  }
+  if (arg === "--codex-session-dir") {
+    args.codexSessionDir = readValue(argv, index + 1, "--codex-session-dir");
+    return index + 1;
+  }
+  if (arg === "--codex-session-max-age-hours") {
+    args.codexSessionMaxAgeHours = readPositiveInteger(argv, index + 1, "--codex-session-max-age-hours");
     return index + 1;
   }
   if (arg === "--lock-dir") {
@@ -130,8 +152,11 @@ function finalizeRunOnceArgs(args: Partial<ProductionOnlineRunOnceArgs>): Produc
     account: args.account,
     secretsFile: args.secretsFile,
     dbFile: args.dbFile,
-    sourceMaxRequests: args.sourceMaxRequests ?? 10,
+    sourceMaxRequests: args.sourceMaxRequests ?? 30,
     sourcePerQueryLimit: args.sourcePerQueryLimit ?? 5,
+    codexSessionDir: args.codexSessionDir,
+    codexSessionMaxAgeHours: args.codexSessionMaxAgeHours,
+    oneTimePrompt: args.oneTimePrompt,
     lockDir: args.lockDir,
     lockTtlSeconds: args.lockTtlSeconds ?? defaultOnlineOperationLockTtlSeconds,
     lockWaitTimeoutSeconds: args.lockWaitTimeoutSeconds,
@@ -144,6 +169,14 @@ function readValue(argv: string[], index: number, flag: string): string {
   const value = argv[index];
   if (!value) {
     throw new Error(`${flag} requires a value`);
+  }
+  return value;
+}
+
+function readTrimmedValue(argv: string[], index: number, flag: string): string {
+  const value = readValue(argv, index, flag).trim();
+  if (!value) {
+    throw new Error(`${flag} requires a non-empty value`);
   }
   return value;
 }

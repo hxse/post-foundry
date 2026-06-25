@@ -26,6 +26,7 @@ import { evaluateAutomationPolicy, type AutomationPolicyContext, type Automation
 import type { ProductionDraftGenerationResult, ProductionDraftGenerator } from "../llm/production-draft-generator";
 import type { PublicXDataProvider, PublicXPostSnapshot } from "../providers/public-x";
 import type { XPostInput, XPostOutput } from "../providers/x-official-publisher";
+import { reportProgress, type ProgressReporter } from "../progress";
 import type { RuntimeRepository, StoredAiAction, StoredAiDecision, StoredAiRun } from "../storage/repositories";
 import { buildTopicRadar, recordTopicRadarSelection, type TopicRadarPackage } from "../topics/topic-radar";
 import type { OnlineOperationContext, OnlineOperationExecutor, OnlineOperationExecutorResult } from "./online-runner";
@@ -34,8 +35,11 @@ export type ProductionAutoPoster = {
   createPost(input: XPostInput): Promise<XPostOutput>;
 };
 
+export type ProductionOperationMode = "live" | "preview";
+
 export type ProductionOperationExecutorInput = {
   repo: RuntimeRepository;
+  mode?: ProductionOperationMode;
   registry: AccountRegistry;
   accountKey: string;
   publicXProvider: PublicXDataProvider;
@@ -52,6 +56,8 @@ export type ProductionOperationExecutorInput = {
   materialsLimit?: number;
   recentPostsLimit?: number;
   memoryTraceLimit?: number;
+  oneTimePrompt?: string;
+  onProgress?: ProgressReporter;
 };
 
 export type PublicXEngagementMetrics = {
@@ -90,6 +96,7 @@ export type ProductionPostReadbackResult =
 export type ProductionOperationFinalAction =
   | { kind: "x_auto_post"; actionId: string; tweetId: string; readback: ProductionPostReadbackResult }
   | { kind: "telegram_notification"; actionId: string; delivery: ManualNotificationDeliveryResult }
+  | { kind: "draft_preview"; actionId: string; candidateId: string; postText: string; policyOutcome: AutomationPolicyDecision["outcome"]; policyRoute: AutomationPolicyDecision["route"] }
   | { kind: "policy_terminal"; actionId: string; outcome: "reject" | "defer" }
   | { kind: "draft_blocked"; actionId: string };
 
@@ -101,6 +108,7 @@ async function runProductionOperation(
   input: ProductionOperationExecutorInput,
   context: OnlineOperationContext
 ): Promise<OnlineOperationExecutorResult> {
+  reportProgress(input.onProgress, "production_operation.start", { account: input.accountKey, trace_id: context.traceId });
   if (context.accountKey !== input.accountKey) {
     throw productionOperationError("executor accountKey does not match runner context", {
       inputAccountKey: input.accountKey,
@@ -109,6 +117,7 @@ async function runProductionOperation(
   }
 
   const ids = idsFor(context.traceId);
+  const oneTimePrompt = normalizeOneTimePrompt(input.oneTimePrompt);
   const { account } = resolveAccountRef(input.registry, { accountKey: input.accountKey });
   seedRegistry(input.repo, input.registry, context.startedAt);
   const configSnapshot = createAccountConfigSnapshot({
@@ -118,9 +127,18 @@ async function runProductionOperation(
   });
   const configSnapshotId = input.configSnapshotId ?? input.repo.saveConfigSnapshot(configSnapshot);
   const shouldLoadPromptForSource = account.enabled && account.data_sources.public_x.enabled;
-  const promptForSource = shouldLoadPromptForSource ? await input.loadPrompt() : undefined;
+  reportProgress(input.onProgress, "production_operation.prompt_for_source.start", { account: input.accountKey });
+  const basePromptForSource = shouldLoadPromptForSource ? await input.loadPrompt() : undefined;
+  const promptForSource = basePromptForSource ? composePromptForRun(basePromptForSource, oneTimePrompt) : undefined;
   const sourceQueries = promptForSource ? derivePublicXSearchQueriesFromPrompt(promptForSource) : [];
+  reportProgress(input.onProgress, "production_operation.prompt_for_source.ok", { query_count: sourceQueries.length });
 
+  reportProgress(input.onProgress, "production_operation.source_collection.start", {
+    provider: "twitterapi.io",
+    query_count: sourceQueries.length,
+    max_queries: input.maxQueries ?? "default",
+    per_query_limit: input.perQueryLimit ?? "default"
+  });
   const sourceCollection = await collectAccountPublicXSourceBatch({
     repo: input.repo,
     account,
@@ -134,23 +152,33 @@ async function runProductionOperation(
     maxQueries: input.maxQueries,
     perQueryLimit: input.perQueryLimit
   });
+  reportProgress(input.onProgress, "production_operation.source_collection.done", {
+    status: sourceCollection.status,
+    request_units: sourceCollection.requestUnits,
+    material_count: sourceCollection.materials.length
+  });
 
   if (sourceCollection.status === "skipped") {
-    return summarizeSourceOnly(sourceCollection, configSnapshotId);
+    reportProgress(input.onProgress, "production_operation.source_collection.skipped", { reason: sourceCollection.skippedReason });
+    return summarizeSourceOnly(sourceCollection, configSnapshotId, oneTimePrompt);
   }
   if (sourceCollection.materials.length === 0) {
-    return summarizeEmptyCollection(sourceCollection, configSnapshotId);
+    reportProgress(input.onProgress, "production_operation.source_collection.empty");
+    return summarizeEmptyCollection(sourceCollection, configSnapshotId, oneTimePrompt);
   }
 
+  reportProgress(input.onProgress, "production_operation.memory.start", { trace_limit: input.memoryTraceLimit ?? "default" });
   const memory = buildAccountMemory({
     repo: input.repo,
     account,
     capturedAt: context.startedAt,
     traceLimit: input.memoryTraceLimit
   });
-  const prompt = promptForSource ?? await input.loadPrompt();
+  reportProgress(input.onProgress, "production_operation.memory.ok", { trace_count: memory.traceSummaries.length });
+  const prompt = promptForSource ?? composePromptForRun(await input.loadPrompt(), oneTimePrompt);
   const recentPosts = input.recentPosts ?? buildRecentPostsFromLedger(input.repo, account.account_uuid, input.recentPostsLimit ?? 50);
 
+  reportProgress(input.onProgress, "production_operation.topic_radar.start", { material_count: sourceCollection.materials.length });
   const topicRadar = buildTopicRadar({
     account,
     configSnapshot,
@@ -173,7 +201,9 @@ async function runProductionOperation(
     model: "topic-radar-production-v0",
     actorId: "production_operation_topic_radar"
   });
+  reportProgress(input.onProgress, "production_operation.topic_radar.ok", { selected_topic: topicRadar.selectedTopic.label });
 
+  reportProgress(input.onProgress, "production_operation.source_context.start");
   const sourceContext = buildSourceContext({
     account,
     topic: topicRadar.selectedTopic,
@@ -193,6 +223,10 @@ async function runProductionOperation(
     finishedAt: context.startedAt,
     actorId: "production_operation_source_ingestion"
   });
+  reportProgress(input.onProgress, "production_operation.source_context.ok", {
+    material_count: sourceContext.materials.length,
+    recent_post_count: sourceContext.recentPosts.length
+  });
 
   const draftInput = createDraftInputPackageFromSourceContext({
     account,
@@ -200,6 +234,10 @@ async function runProductionOperation(
     configSnapshotId,
     prompt,
     sourceContext
+  });
+  reportProgress(input.onProgress, "production_operation.draft_generation.start", {
+    provider: input.draftGenerator.providerName,
+    model: input.draftGenerator.model
   });
   const generation = await generateDraftWithLedger({
     repo: input.repo,
@@ -211,7 +249,12 @@ async function runProductionOperation(
     auditEventId: ids.draftAuditEventId,
     apiAuditId: ids.llmApiAuditId,
     traceId: context.traceId,
-    now: context.startedAt
+    now: context.startedAt,
+    oneTimePromptSha256: oneTimePrompt?.sha256
+  });
+  reportProgress(input.onProgress, "production_operation.draft_generation.raw_output_received", {
+    input_tokens: generation.usage?.inputTokens ?? 0,
+    output_tokens: generation.usage?.outputTokens ?? 0
   });
   const draft = parseGeneratedDraftWithLedger({
     repo: input.repo,
@@ -236,6 +279,10 @@ async function runProductionOperation(
     model: `${input.draftGenerator.providerName}:${input.draftGenerator.model}`,
     actorId: "production_operation_draft_generator"
   });
+  reportProgress(input.onProgress, "production_operation.draft_generation.ok", {
+    draft_id: draft.id,
+    text_length: draft.postText.length
+  });
 
   const draftGate = evaluateDraftForPosting({
     draft,
@@ -243,6 +290,7 @@ async function runProductionOperation(
     duplicateThreshold: input.duplicateThreshold
   });
   if (draftGate.status === "blocked") {
+    reportProgress(input.onProgress, "production_operation.draft_gate.blocked", { reasons: draftGate.reasons.length });
     recordDraftGateBlockedAction({
       repo: input.repo,
       accountUuid: account.account_uuid,
@@ -261,10 +309,12 @@ async function runProductionOperation(
       draft,
       draftGate,
       finalAction: { kind: "draft_blocked", actionId: ids.finalActionId },
-      configSnapshotId
+      configSnapshotId,
+      oneTimePrompt
     });
   }
 
+  reportProgress(input.onProgress, "production_operation.policy.start");
   const basePolicyContext = buildProductionPolicyContext({
     repo: input.repo,
     accountUuid: account.account_uuid,
@@ -275,6 +325,10 @@ async function runProductionOperation(
     account,
     candidate: draftGate.candidate,
     context: policyContext
+  });
+  reportProgress(input.onProgress, "production_operation.policy.decided", {
+    outcome: policyDecision.outcome,
+    route: policyDecision.route
   });
   recordPolicyEvaluation({
     repo: input.repo,
@@ -289,22 +343,36 @@ async function runProductionOperation(
     now: context.startedAt
   });
 
-  const finalAction = await executeProductionFinalAction({
-    repo: input.repo,
-    decision: policyDecision,
-    candidate: draftGate.candidate,
-    autoPoster: input.autoPoster,
-    notificationSender: input.notificationSender,
-    publicXProvider: input.publicXProvider,
-    policyDecisionId: ids.policyDecisionId,
-    actionId: ids.finalActionId,
-    auditEventId: ids.finalActionAuditEventId,
-    readbackApiAuditId: ids.postReadbackApiAuditId,
-    readbackEvidenceRefId: ids.postReadbackEvidenceRefId,
-    readbackAuditEventId: ids.postReadbackAuditEventId,
-    traceId: context.traceId,
-    now: context.startedAt
-  });
+  const finalAction = (input.mode ?? "live") === "preview"
+    ? recordDraftPreviewAction({
+        repo: input.repo,
+        decision: policyDecision,
+        candidate: draftGate.candidate,
+        policyDecisionId: ids.policyDecisionId,
+        actionId: ids.finalActionId,
+        auditEventId: ids.finalActionAuditEventId,
+        traceId: context.traceId,
+        now: context.startedAt,
+        onProgress: input.onProgress
+      })
+    : await executeProductionFinalAction({
+        repo: input.repo,
+        decision: policyDecision,
+        candidate: draftGate.candidate,
+        autoPoster: input.autoPoster,
+        notificationSender: input.notificationSender,
+        publicXProvider: input.publicXProvider,
+        policyDecisionId: ids.policyDecisionId,
+        actionId: ids.finalActionId,
+        auditEventId: ids.finalActionAuditEventId,
+        readbackApiAuditId: ids.postReadbackApiAuditId,
+        readbackEvidenceRefId: ids.postReadbackEvidenceRefId,
+        readbackAuditEventId: ids.postReadbackAuditEventId,
+        traceId: context.traceId,
+        now: context.startedAt,
+        onProgress: input.onProgress
+      });
+  reportProgress(input.onProgress, "production_operation.final_action.done", { kind: finalAction.kind });
 
   return summarizeCompleted({
     sourceCollection,
@@ -315,7 +383,8 @@ async function runProductionOperation(
     draftGate,
     policyDecision,
     finalAction,
-    configSnapshotId
+    configSnapshotId,
+    oneTimePrompt
   });
 }
 
@@ -330,6 +399,7 @@ async function generateDraftWithLedger(input: {
   apiAuditId: string;
   traceId: string;
   now: string;
+  oneTimePromptSha256?: string;
 }): Promise<ProductionDraftGenerationResult> {
   try {
     const generation = await input.generator.generateDraft({
@@ -351,7 +421,8 @@ async function generateDraftWithLedger(input: {
         model: input.generator.model,
         provider_response_id: generation.providerResponseId,
         input_tokens: generation.usage?.inputTokens,
-        output_tokens: generation.usage?.outputTokens
+        output_tokens: generation.usage?.outputTokens,
+        one_time_prompt_sha256: input.oneTimePromptSha256
       }
     });
     return generation;
@@ -368,7 +439,8 @@ async function generateDraftWithLedger(input: {
         finishedAt: input.now,
         metadata: {
           model: input.generator.model,
-          error: errorMessage(error)
+          error: errorMessage(error),
+          one_time_prompt_sha256: input.oneTimePromptSha256
         }
       });
       input.repo.recordAiRun({
@@ -471,9 +543,12 @@ async function executeProductionFinalAction(input: {
   readbackAuditEventId: string;
   traceId: string;
   now: string;
+  onProgress?: ProgressReporter;
 }): Promise<ProductionOperationFinalAction> {
   if (input.decision.outcome === "auto_post") {
+    reportProgress(input.onProgress, "production_operation.x_auto_post.start", { candidate_id: input.candidate.id });
     const { posted, readback } = await createXPostWithLedger(input);
+    reportProgress(input.onProgress, "production_operation.x_auto_post.done", { readback_status: readback.status });
     return {
       kind: "x_auto_post",
       actionId: input.actionId,
@@ -483,6 +558,7 @@ async function executeProductionFinalAction(input: {
   }
 
   if (input.decision.outcome === "human_review") {
+    reportProgress(input.onProgress, "production_operation.telegram_notification.start", { candidate_id: input.candidate.id });
     const delivery = await deliverManualNotification({
       repo: input.repo,
       sender: input.notificationSender,
@@ -494,6 +570,7 @@ async function executeProductionFinalAction(input: {
       traceId: input.traceId,
       now: input.now
     });
+    reportProgress(input.onProgress, "production_operation.telegram_notification.done", { status: delivery.status });
     return {
       kind: "telegram_notification",
       actionId: input.actionId,
@@ -501,6 +578,7 @@ async function executeProductionFinalAction(input: {
     };
   }
 
+  reportProgress(input.onProgress, "production_operation.policy_terminal", { outcome: input.decision.outcome });
   recordPolicyTerminalAction(input);
   return {
     kind: "policy_terminal",
@@ -523,8 +601,10 @@ async function createXPostWithLedger(input: {
   readbackAuditEventId: string;
   traceId: string;
   now: string;
+  onProgress?: ProgressReporter;
 }): Promise<{ posted: Extract<XPostOutput, { status: "posted" }>; readback: ProductionPostReadbackResult }> {
   try {
+    reportProgress(input.onProgress, "production_operation.x_official_api.create_post.start");
     const result = await input.autoPoster.createPost({
       accountKey: input.decision.accountKey,
       text: input.candidate.text,
@@ -571,6 +651,8 @@ async function createXPostWithLedger(input: {
         }
       });
     });
+    reportProgress(input.onProgress, "production_operation.x_official_api.create_post.done", { text_length: result.textLength });
+    reportProgress(input.onProgress, "production_operation.public_x_readback.start", { provider: "twitterapi.io" });
     const readback = await readBackPublishedPost({
       repo: input.repo,
       provider: input.publicXProvider,
@@ -585,6 +667,7 @@ async function createXPostWithLedger(input: {
       tweetId: result.tweetId,
       candidateText: input.candidate.text
     });
+    reportProgress(input.onProgress, "production_operation.public_x_readback.done", { status: readback.status });
     return { posted: result, readback };
   } catch (error) {
     recordXPostFailedAction({
@@ -851,6 +934,76 @@ function recordPolicyEvaluation(input: {
   });
 }
 
+function recordDraftPreviewAction(input: {
+  repo: RuntimeRepository;
+  decision: AutomationPolicyDecision;
+  candidate: PostingCandidate;
+  policyDecisionId: string;
+  actionId: string;
+  auditEventId: string;
+  traceId: string;
+  now: string;
+  onProgress?: ProgressReporter;
+}): Extract<ProductionOperationFinalAction, { kind: "draft_preview" }> {
+  reportProgress(input.onProgress, "production_operation.preview.no_post", {
+    candidate_id: input.candidate.id,
+    policy_outcome: input.decision.outcome,
+    policy_route: input.decision.route
+  });
+  input.repo.transaction(() => {
+    input.repo.recordAiAction({
+      id: input.actionId,
+      accountUuid: input.decision.accountUuid,
+      decisionId: input.policyDecisionId,
+      actionType: "draft_preview_noop",
+      status: "skipped",
+      startedAt: input.now,
+      finishedAt: input.now,
+      input: {
+        candidate_id: input.candidate.id,
+        policy_outcome: input.decision.outcome,
+        policy_route: input.decision.route,
+        post_text_sha256: sha256(input.candidate.text)
+      },
+      output: {
+        post_text: input.candidate.text,
+        text_length: input.candidate.text.length,
+        urls: input.candidate.urls,
+        topic_tags: input.candidate.topicTags,
+        evidence_ids: input.candidate.evidenceIds
+      }
+    });
+    input.repo.recordAuditEvent({
+      id: input.auditEventId,
+      accountUuid: input.decision.accountUuid,
+      eventType: "debug_draft_preview_created",
+      subjectType: "ai_action",
+      subjectId: input.actionId,
+      actorType: "system",
+      actorId: "production_operation_preview",
+      traceId: input.traceId,
+      occurredAt: input.now,
+      metadata: {
+        candidate_id: input.candidate.id,
+        policy_decision_id: input.policyDecisionId,
+        policy_outcome: input.decision.outcome,
+        policy_route: input.decision.route,
+        post_text_sha256: sha256(input.candidate.text),
+        text_length: input.candidate.text.length,
+        no_post: true
+      }
+    });
+  });
+  return {
+    kind: "draft_preview",
+    actionId: input.actionId,
+    candidateId: input.candidate.id,
+    postText: input.candidate.text,
+    policyOutcome: input.decision.outcome,
+    policyRoute: input.decision.route
+  };
+}
+
 function recordPolicyTerminalAction(input: {
   repo: RuntimeRepository;
   decision: AutomationPolicyDecision;
@@ -1056,6 +1209,7 @@ function summarizeCompleted(input: {
   policyDecision?: AutomationPolicyDecision;
   finalAction: ProductionOperationFinalAction;
   configSnapshotId: string;
+  oneTimePrompt?: OneTimePromptContext;
 }): OnlineOperationExecutorResult {
   return {
     outcome: outcomeForFinalAction(input.finalAction),
@@ -1082,6 +1236,10 @@ function summarizeCompleted(input: {
       policy_outcome: input.policyDecision?.outcome,
       policy_route: input.policyDecision?.route,
       final_action_kind: input.finalAction.kind,
+      preview_candidate_id: input.finalAction.kind === "draft_preview" ? input.finalAction.candidateId : undefined,
+      preview_post_text: input.finalAction.kind === "draft_preview" ? input.finalAction.postText : undefined,
+      preview_policy_outcome: input.finalAction.kind === "draft_preview" ? input.finalAction.policyOutcome : undefined,
+      preview_policy_route: input.finalAction.kind === "draft_preview" ? input.finalAction.policyRoute : undefined,
       tweet_id: input.finalAction.kind === "x_auto_post" ? input.finalAction.tweetId : undefined,
       post_readback_status: input.finalAction.kind === "x_auto_post" ? input.finalAction.readback.status : undefined,
       post_readback_text_matches_candidate:
@@ -1093,12 +1251,17 @@ function summarizeCompleted(input: {
       post_readback_view_count:
         input.finalAction.kind === "x_auto_post" && input.finalAction.readback.status === "confirmed" ? input.finalAction.readback.metrics.viewCount : undefined,
       telegram_delivery_status: input.finalAction.kind === "telegram_notification" ? input.finalAction.delivery.status : undefined,
-      config_snapshot_id: input.configSnapshotId
+      config_snapshot_id: input.configSnapshotId,
+      one_time_prompt_sha256: input.oneTimePrompt?.sha256
     }
   };
 }
 
-function summarizeSourceOnly(sourceCollection: PublicXSourceCollectionResult, configSnapshotId: string): OnlineOperationExecutorResult {
+function summarizeSourceOnly(
+  sourceCollection: PublicXSourceCollectionResult,
+  configSnapshotId: string,
+  oneTimePrompt?: OneTimePromptContext
+): OnlineOperationExecutorResult {
   return {
     outcome: "skipped",
     finalAction: "source_collection_skipped",
@@ -1114,12 +1277,17 @@ function summarizeSourceOnly(sourceCollection: PublicXSourceCollectionResult, co
       material_count: sourceCollection.materials.length,
       duplicate_material_count: sourceCollection.duplicateMaterialCount,
       api_audit_ids: sourceCollection.apiAuditIds,
-      config_snapshot_id: configSnapshotId
+      config_snapshot_id: configSnapshotId,
+      one_time_prompt_sha256: oneTimePrompt?.sha256
     }
   };
 }
 
-function summarizeEmptyCollection(sourceCollection: PublicXSourceCollectionResult, configSnapshotId: string): OnlineOperationExecutorResult {
+function summarizeEmptyCollection(
+  sourceCollection: PublicXSourceCollectionResult,
+  configSnapshotId: string,
+  oneTimePrompt?: OneTimePromptContext
+): OnlineOperationExecutorResult {
   return {
     outcome: "skipped",
     finalAction: "source_collection_empty",
@@ -1135,8 +1303,51 @@ function summarizeEmptyCollection(sourceCollection: PublicXSourceCollectionResul
       material_count: 0,
       duplicate_material_count: sourceCollection.duplicateMaterialCount,
       api_audit_ids: sourceCollection.apiAuditIds,
-      config_snapshot_id: configSnapshotId
+      config_snapshot_id: configSnapshotId,
+      one_time_prompt_sha256: oneTimePrompt?.sha256
     }
+  };
+}
+
+const maxOneTimePromptLength = 4000;
+
+type OneTimePromptContext = {
+  text: string;
+  sha256: string;
+};
+
+function normalizeOneTimePrompt(value: string | undefined): OneTimePromptContext | undefined {
+  const text = value?.trim();
+  if (!text) {
+    return undefined;
+  }
+  if (text.length > maxOneTimePromptLength) {
+    throw productionOperationError("one-time prompt is too long", {
+      maxLength: maxOneTimePromptLength,
+      actualLength: text.length
+    });
+  }
+  return {
+    text,
+    sha256: sha256(text)
+  };
+}
+
+function composePromptForRun(prompt: AccountInitialPrompt, oneTimePrompt: OneTimePromptContext | undefined): AccountInitialPrompt {
+  if (!oneTimePrompt) {
+    return prompt;
+  }
+  const composed = [
+    prompt.prompt,
+    "",
+    "本轮临时提示（只影响这一次运行；不要当成长期账号策略；如果缺少证据，先围绕它抓热点并重新查资料）:",
+    oneTimePrompt.text
+  ].join("\n");
+  return {
+    accountKey: prompt.accountKey,
+    source: "inline",
+    prompt: composed,
+    promptSha256: sha256(composed)
   };
 }
 
@@ -1182,6 +1393,9 @@ function traceIdForAction(action: StoredAiAction, policyRunsByDecisionId: Map<st
 }
 
 function outcomeForFinalAction(finalAction: ProductionOperationFinalAction): "completed" | "skipped" | "failed" {
+  if (finalAction.kind === "draft_preview") {
+    return "completed";
+  }
   if (finalAction.kind === "telegram_notification" && finalAction.delivery.status === "failed") {
     return "failed";
   }
@@ -1192,6 +1406,9 @@ function outcomeForFinalAction(finalAction: ProductionOperationFinalAction): "co
 }
 
 function finalActionLabel(finalAction: ProductionOperationFinalAction): string {
+  if (finalAction.kind === "draft_preview") {
+    return "draft_preview_noop";
+  }
   if (finalAction.kind === "x_auto_post") {
     return "x_official_auto_post";
   }

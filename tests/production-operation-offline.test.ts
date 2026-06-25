@@ -93,7 +93,7 @@ describe("production v0 operation loop", () => {
       expect(repo.listApiCallAuditForAccount(account.account_uuid).map((audit) => `${audit.provider}:${audit.operation}:${audit.status}`)).toEqual(
         expect.arrayContaining([
           "twitterapi.io:public_x_search:succeeded",
-          "openai:llm_draft_generation:succeeded",
+          "codex:llm_draft_generation:succeeded",
           "twitterapi.io:public_x_post_readback:succeeded"
         ])
       );
@@ -146,6 +146,130 @@ describe("production v0 operation loop", () => {
         }
       });
       expect(memory.nextRunHints.join("\n")).toContain("compare confirmed post metrics");
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+
+  it("previews a generated post without calling X posting, Telegram, or readback providers", async () => {
+    const dir = await tempDir();
+    const db = openMigratedTestDb();
+    try {
+      const repo = new RuntimeRepository(db);
+      const registry = registryWithRealPostingEnabled("zh-tech");
+      const account = resolveAccountRef(registry, { accountKey: "zh-tech" }).account;
+      const publicX = fakePublicXProvider();
+      const draftOutput = naturalDraftOutput("draft-prod-preview-1");
+      const draftGenerator = fakeDraftGenerator(draftOutput);
+      const autoPoster = fakeAutoPoster();
+      const notifier = fakeNotifier();
+
+      const result = await runOnlineOperationOnce({
+        accountKey: "zh-tech",
+        lockDir: dir,
+        traceId: "trace-prod-v0-preview-1",
+        now: fixedNow(now),
+        enableHeartbeat: false,
+        operation: createProductionOperationExecutor({
+          mode: "preview",
+          repo,
+          registry,
+          accountKey: "zh-tech",
+          publicXProvider: publicX,
+          draftGenerator,
+          autoPoster,
+          notificationSender: notifier,
+          loadPrompt: () => initialPrompt("zh-tech"),
+          maxQueries: 1,
+          perQueryLimit: 2
+        })
+      });
+
+      expect(result).toMatchObject({
+        outcome: "completed",
+        finalAction: "draft_preview_noop",
+        summary: {
+          policy_outcome: "auto_post",
+          policy_route: "x_official_auto",
+          final_action_kind: "draft_preview",
+          preview_candidate_id: "draft-prod-preview-1",
+          preview_post_text: draftOutput.post_text,
+          preview_policy_outcome: "auto_post",
+          preview_policy_route: "x_official_auto"
+        }
+      });
+      expect(publicX.calls).toEqual([{ query: "AI", limit: 2 }]);
+      expect(publicX.lookups).toHaveLength(0);
+      expect(autoPoster.posts).toHaveLength(0);
+      expect(notifier.messages).toHaveLength(0);
+      expect(repo.listAiActionsForAccount(account.account_uuid)).toMatchObject([
+        {
+          action_type: "draft_preview_noop",
+          status: "skipped"
+        }
+      ]);
+      expect(repo.listApiCallAuditForAccount(account.account_uuid).map((audit) => [audit.provider, audit.operation, audit.status].join(":"))).toEqual(
+        expect.arrayContaining(["twitterapi.io:public_x_search:succeeded", "codex:llm_draft_generation:succeeded"])
+      );
+      expect(repo.listApiCallAuditForAccount(account.account_uuid).map((audit) => audit.operation)).not.toContain("public_x_post_readback");
+      expect(repo.listAuditEventsForAccount(account.account_uuid).map((event) => event.event_type)).toEqual(
+        expect.arrayContaining(["automation_policy_decided", "debug_draft_preview_created"])
+      );
+    } finally {
+      db.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a once-only operator prompt for this run without making it account config", async () => {
+    const dir = await tempDir();
+    const db = openMigratedTestDb();
+    try {
+      const repo = new RuntimeRepository(db);
+      const registry = registryWithRealPostingEnabled("zh-tech");
+      const account = resolveAccountRef(registry, { accountKey: "zh-tech" }).account;
+      const publicX = fakePublicXProvider();
+      const draftGenerator = fakeDraftGenerator(naturalDraftOutput("draft-prod-one-time-1"));
+      const oneTimePrompt = "临时选题方向：BTC ETF";
+
+      const result = await runOnlineOperationOnce({
+        accountKey: "zh-tech",
+        lockDir: dir,
+        traceId: "trace-prod-v0-one-time-1",
+        now: fixedNow(now),
+        enableHeartbeat: false,
+        operation: createProductionOperationExecutor({
+          repo,
+          registry,
+          accountKey: "zh-tech",
+          publicXProvider: publicX,
+          draftGenerator,
+          autoPoster: fakeAutoPoster(),
+          notificationSender: fakeNotifier(),
+          loadPrompt: () => noQueryPrompt("zh-tech"),
+          maxQueries: 1,
+          perQueryLimit: 2,
+          oneTimePrompt
+        })
+      });
+
+      expect(publicX.calls).toEqual([{ query: "BTC ETF", limit: 2 }]);
+      expect(draftGenerator.requests).toHaveLength(1);
+      expect(draftGenerator.requests[0].prompt.prompt).toContain("本轮临时提示");
+      expect(draftGenerator.requests[0].prompt.prompt).toContain(oneTimePrompt);
+      expect(draftGenerator.requests[0].prompt.promptSha256).toBe(sha256(draftGenerator.requests[0].prompt.prompt));
+      expect(result.summary).toMatchObject({
+        one_time_prompt_sha256: sha256(oneTimePrompt)
+      });
+      const llmAudit = repo
+        .listApiCallAuditForAccount(account.account_uuid)
+        .find((audit) => audit.provider === "codex" && audit.operation === "llm_draft_generation");
+      expect(llmAudit).toBeDefined();
+      expect(JSON.parse(llmAudit?.metadata_json ?? "{}")).toMatchObject({
+        one_time_prompt_sha256: sha256(oneTimePrompt)
+      });
     } finally {
       db.close();
       await rm(dir, { recursive: true, force: true });
@@ -437,7 +561,7 @@ describe("production v0 operation loop", () => {
       expect(autoPoster.posts).toHaveLength(0);
       expect(notifier.messages).toHaveLength(0);
       expect(repo.listApiCallAuditForAccount(account.account_uuid).map((audit) => [audit.provider, audit.operation, audit.status].join(":"))).toEqual(
-        expect.arrayContaining(["twitterapi.io:public_x_search:succeeded", "openai:llm_draft_generation:succeeded"])
+        expect.arrayContaining(["twitterapi.io:public_x_search:succeeded", "codex:llm_draft_generation:succeeded"])
       );
       expect(repo.listAiRunsForAccount(account.account_uuid)).toEqual(
         expect.arrayContaining([
@@ -755,7 +879,7 @@ function publishedPostSnapshot(id: string, text: string): PublicXPostSnapshot {
 function fakeDraftGenerator(output: unknown): ProductionDraftGenerator & { requests: ProductionDraftGenerationInput[] } {
   const requests: ProductionDraftGenerationInput[] = [];
   return {
-    providerName: "openai",
+    providerName: "codex",
     model: "offline-production-llm",
     requests,
     generateDraft: async (input) => {
@@ -810,6 +934,16 @@ function naturalDraftOutput(draftId: string) {
     topic_tags: ["AI"],
     evidence_ids: ["public-x:tweet-ai-1"],
     internal_notes: "offline production fixture draft"
+  };
+}
+
+function noQueryPrompt(accountKey: string): AccountInitialPrompt {
+  const prompt = "保持自然表达，避免调试痕迹。";
+  return {
+    accountKey,
+    source: "inline",
+    prompt,
+    promptSha256: sha256(prompt)
   };
 }
 

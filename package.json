@@ -25,7 +25,8 @@
     "test:telegram-offline": "vitest run tests/telegram-offline.test.ts",
     "test:topic-radar-offline": "vitest run tests/topic-radar-offline.test.ts",
     "test:production-run-once-offline": "vitest run tests/production-run-once-offline.test.ts",
-    "test:production-operation-offline": "vitest run tests/production-operation-offline.test.ts"
+    "test:production-operation-offline": "vitest run tests/production-operation-offline.test.ts",
+    "test:codex-draft-generator-offline": "vitest run tests/codex-draft-generator-offline.test.ts"
   },
   "dependencies": {
     "drizzle-orm": "^0.44.2",

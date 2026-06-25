@@ -1,36 +1,35 @@
 import { loadAccountInitialPrompt } from "../lib/accounts/account-prompt";
+import { loadAccountRegistryFromSecretsFile } from "../lib/accounts/registry";
 import { isApiError } from "../lib/api/errors";
 import { redactSecrets } from "../lib/api/redaction";
-import { resolveAccountCredentials, resolveTelegramNotificationCredentials } from "../lib/api/secrets";
-import { loadAccountRegistryFromSecretsFile } from "../lib/accounts/registry";
-import { parseProductionOnlineRunLoopArgs } from "../lib/orchestration/production-runner-args";
+import { resolveAccountCredentials } from "../lib/api/secrets";
+import { runOnlineOperationOnce, type OnlineOperationRunResult } from "../lib/orchestration/online-runner";
+import { createProductionOperationExecutor, type ProductionAutoPoster } from "../lib/orchestration/production-operation-executor";
 import { normalizeProductionPreflightError, runProductionLocalPreflight } from "../lib/orchestration/production-preflight";
-import { createProductionOperationExecutor } from "../lib/orchestration/production-operation-executor";
-import { runOnlineOperationLoop } from "../lib/orchestration/online-runner";
-import { TwitterApiIoPublicXAdapter } from "../lib/providers/twitterapi-io";
+import { parseProductionOnlineRunOnceArgs } from "../lib/orchestration/production-runner-args";
 import { checkCodexCliRuntime, CodexCliDraftGenerator } from "../lib/providers/codex-draft-generator";
-import { TelegramNotifier } from "../lib/providers/telegram-notifier";
-import { XOfficialPublisherClient } from "../lib/providers/x-official-publisher";
+import type { TelegramNotificationSender } from "../lib/notifications/manual-notification";
+import { TwitterApiIoPublicXAdapter } from "../lib/providers/twitterapi-io";
 import { RuntimeRepository } from "../lib/storage/repositories";
 import { printCliProgress } from "./progress-log";
 
 async function main(): Promise<void> {
-  const args = parseProductionOnlineRunLoopArgs(process.argv.slice(2));
-  printCliProgress({ event: "prod_online_run_loop.start", fields: { account: args.account } });
+  const args = parseProductionOnlineRunOnceArgs(process.argv.slice(2));
+  printCliProgress({ event: "debug_online_post_preview.start", fields: { account: args.account } });
   let registry: Awaited<ReturnType<typeof loadAccountRegistryFromSecretsFile>>;
   let credentials: Awaited<ReturnType<typeof resolveAccountCredentials>>;
-  let telegramCredentials: Awaited<ReturnType<typeof resolveTelegramNotificationCredentials>>;
   const loadPrompt = () => loadAccountInitialPrompt({ accountKey: args.account, secretsPath: args.secretsFile });
+
   try {
     printCliProgress({ event: "production_preflight.local_files.start", fields: { secrets_file: args.secretsFile } });
     registry = await loadAccountRegistryFromSecretsFile({ secretsPath: args.secretsFile });
     credentials = await resolveAccountCredentials({ accountKey: args.account, secretsPath: args.secretsFile });
-    telegramCredentials = await resolveTelegramNotificationCredentials({ secretsPath: args.secretsFile });
     const preflight = await runProductionLocalPreflight({
+      mode: "draft_preview",
       registry,
       accountKey: args.account,
       accountCredentials: credentials,
-      telegramCredentials,
+      telegramCredentials: {},
       checkCodexRuntime: () => checkCodexCliRuntime({ cwd: process.cwd(), onProgress: printCliProgress }),
       loadPrompt,
       onProgress: printCliProgress
@@ -45,26 +44,18 @@ async function main(): Promise<void> {
   const db = openRuntimeDatabase({ path: args.dbFile });
   printCliProgress({ event: "runtime_db.open.ok", fields: { db_file: args.dbFile } });
 
-  console.log("prod online run loop: starting");
-  console.log(`account=${args.account}`);
-  console.log(`interval_seconds=${args.intervalSeconds}`);
-  console.log(`jitter_seconds=${args.jitterSeconds}`);
-  console.log(`sleep_utc=${args.sleepUtc ?? "off"}`);
-
   try {
     const repo = new RuntimeRepository(db);
-    const result = await runOnlineOperationLoop({
+    const result = await runOnlineOperationOnce({
       accountKey: args.account,
-      intervalSeconds: args.intervalSeconds,
-      jitterSeconds: args.jitterSeconds,
-      sleepUtc: args.sleepUtc,
-      maxIterations: args.maxIterations,
+      entrypoint: "debug-online-post-preview",
       lockDir: args.lockDir,
       lockTtlSeconds: args.lockTtlSeconds,
       lockWaitTimeoutSeconds: args.lockWaitTimeoutSeconds,
       lockPollIntervalMs: args.lockPollIntervalMs,
       onProgress: printCliProgress,
       operation: createProductionOperationExecutor({
+        mode: "preview",
         repo,
         registry,
         accountKey: args.account,
@@ -75,29 +66,36 @@ async function main(): Promise<void> {
           sessionMaxAgeHours: args.codexSessionMaxAgeHours,
           onProgress: printCliProgress
         }),
-        autoPoster: new XOfficialPublisherClient({ accessToken: credentials.xOfficialAccessToken }),
-        notificationSender: new TelegramNotifier({
-          botToken: telegramCredentials.botToken,
-          chatId: telegramCredentials.notificationChannelChatId
-        }),
+        autoPoster: forbiddenAutoPoster(),
+        notificationSender: forbiddenNotificationSender(),
         loadPrompt,
         maxQueries: args.sourceMaxRequests,
         perQueryLimit: args.sourcePerQueryLimit,
+        oneTimePrompt: args.oneTimePrompt,
         onProgress: printCliProgress
       })
     });
 
-    console.log("prod online run loop: stopped");
-    console.log(`iterations=${result.iterations}`);
-    const last = result.results.at(-1);
-    if (last) {
-      console.log(`last_trace_id=${last.traceId}`);
-      console.log(`last_outcome=${last.outcome}`);
-      console.log(`last_final_action=${last.finalAction ?? "none"}`);
-    }
+    printPreviewResult(result);
   } finally {
     db.close();
   }
+}
+
+function forbiddenAutoPoster(): ProductionAutoPoster {
+  return {
+    createPost: async () => {
+      throw new Error("debug-online-post-preview must not call X official createPost");
+    }
+  };
+}
+
+function forbiddenNotificationSender(): TelegramNotificationSender {
+  return {
+    sendMessage: async () => {
+      throw new Error("debug-online-post-preview must not send Telegram notifications");
+    }
+  };
 }
 
 function printPreflightResult(result: Awaited<ReturnType<typeof runProductionLocalPreflight>>): void {
@@ -106,6 +104,32 @@ function printPreflightResult(result: Awaited<ReturnType<typeof runProductionLoc
   console.log("prompt_sha256=" + result.promptSha256);
   console.log("codex_runtime=ready");
   console.log("codex_version=" + result.codexRuntime.version);
+}
+
+function printPreviewResult(result: OnlineOperationRunResult): void {
+  const summary = result.summary ?? {};
+  console.log("debug online post preview: ok");
+  console.log(`account=${result.accountKey}`);
+  console.log(`trace_id=${result.traceId}`);
+  console.log(`outcome=${result.outcome}`);
+  console.log(`final_action=${result.finalAction ?? "none"}`);
+  console.log(`executor=${String(summary.executor ?? "unknown")}`);
+  console.log(`source_collection_status=${String(summary.source_collection_status ?? "unknown")}`);
+  console.log(`request_units=${String(summary.request_units ?? 0)}`);
+  console.log(`material_count=${String(summary.material_count ?? 0)}`);
+  console.log(`selected_topic=${String(summary.selected_topic_label ?? "unknown")}`);
+  console.log(`policy_outcome=${String(summary.preview_policy_outcome ?? summary.policy_outcome ?? "unknown")}`);
+  console.log(`policy_route=${String(summary.preview_policy_route ?? summary.policy_route ?? "unknown")}`);
+  if (summary.skipped_reason) {
+    console.log(`skipped_reason=${String(summary.skipped_reason)}`);
+  }
+  if (typeof summary.preview_post_text === "string" && summary.preview_post_text.trim().length > 0) {
+    console.log("post_text_begin");
+    console.log(summary.preview_post_text);
+    console.log("post_text_end");
+  } else {
+    console.log("post_text_unavailable=true");
+  }
 }
 
 main().catch((error: unknown) => {

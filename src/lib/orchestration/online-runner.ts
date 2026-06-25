@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { z } from "zod";
 import { ApiError } from "../api/errors";
+import { reportProgress, type ProgressReporter } from "../progress";
 
 export const defaultOnlineLoopIntervalSeconds = 8 * 60 * 60;
 export const minimumOnlineLoopIntervalSeconds = 5 * 60;
@@ -11,7 +12,7 @@ export const defaultOnlineLoopJitterSeconds = 0;
 export const defaultOnlineOperationLockTtlSeconds = 2 * 60 * 60;
 export const defaultOnlineOperationLockPollIntervalMs = 1_000;
 
-export type OnlineOperationEntrypoint = "prod-online-run-once" | "prod-online-run-loop";
+export type OnlineOperationEntrypoint = "prod-online-run-once" | "prod-online-run-loop" | "debug-online-post-preview";
 export type OnlineOperationOutcome = "completed" | "skipped" | "failed";
 
 export type OnlineOperationContext = {
@@ -69,6 +70,7 @@ export type RunOnlineOperationOnceInput = {
   pid?: number;
   isProcessAlive?: (pid: number, hostname: string) => boolean;
   enableHeartbeat?: boolean;
+  onProgress?: ProgressReporter;
 };
 
 export type RunOnlineOperationLoopInput = Omit<RunOnlineOperationOnceInput, "entrypoint" | "traceId"> & {
@@ -99,6 +101,7 @@ export type AcquireAccountOperationLockInput = {
   pid?: number;
   isProcessAlive?: (pid: number, hostname: string) => boolean;
   enableHeartbeat?: boolean;
+  onProgress?: ProgressReporter;
 };
 
 type SleepWindow = {
@@ -116,7 +119,7 @@ const isoDateTimeSchema = z.string().datetime();
 const positiveIntegerSchema = z.number().int().positive();
 const nonNegativeIntegerSchema = z.number().int().nonnegative();
 const outcomeSchema = z.enum(["completed", "skipped", "failed"]);
-const entrypointSchema = z.enum(["prod-online-run-once", "prod-online-run-loop"]);
+const entrypointSchema = z.enum(["prod-online-run-once", "prod-online-run-loop", "debug-online-post-preview"]);
 const lockSnapshotSchema = z
   .object({
     kind: z.literal("post_foundry_online_operation_lock_v1"),
@@ -143,6 +146,7 @@ export async function runOnlineOperationOnce(input: RunOnlineOperationOnceInput)
   const entrypoint = input.entrypoint ?? "prod-online-run-once";
   const now = input.now ?? (() => new Date());
   const traceId = input.traceId ?? createTraceId(accountKey, now());
+  reportProgress(input.onProgress, "online_operation.lock_wait.start", { account: accountKey, trace_id: traceId });
   const lock = await acquireAccountOperationLock({
     accountKey,
     entrypoint,
@@ -156,11 +160,14 @@ export async function runOnlineOperationOnce(input: RunOnlineOperationOnceInput)
     hostname: input.hostname,
     pid: input.pid,
     isProcessAlive: input.isProcessAlive,
-    enableHeartbeat: input.enableHeartbeat
+    enableHeartbeat: input.enableHeartbeat,
+    onProgress: input.onProgress
   });
+  reportProgress(input.onProgress, "online_operation.lock.acquired", { account: accountKey, trace_id: traceId });
 
   const startedAt = now().toISOString();
   try {
+    reportProgress(input.onProgress, "online_operation.executor.start", { account: accountKey, trace_id: traceId, entrypoint });
     const executorResult = parseOperationResult(
       await input.operation({
         accountKey,
@@ -169,6 +176,12 @@ export async function runOnlineOperationOnce(input: RunOnlineOperationOnceInput)
         startedAt
       })
     );
+    reportProgress(input.onProgress, "online_operation.executor.done", {
+      account: accountKey,
+      trace_id: traceId,
+      outcome: executorResult.outcome,
+      final_action: executorResult.finalAction ?? "none"
+    });
     return {
       accountKey,
       traceId,
@@ -179,6 +192,7 @@ export async function runOnlineOperationOnce(input: RunOnlineOperationOnceInput)
     };
   } finally {
     await lock.release();
+    reportProgress(input.onProgress, "online_operation.lock.released", { account: accountKey, trace_id: traceId });
   }
 }
 
@@ -196,10 +210,17 @@ export async function runOnlineOperationLoop(input: RunOnlineOperationLoopInput)
   const sleep = input.sleep ?? sleepMs;
   const random = input.random ?? Math.random;
   const results: OnlineOperationRunResult[] = [];
+  reportProgress(input.onProgress, "online_operation.loop.start", {
+    account: accountKey,
+    interval_seconds: intervalSeconds,
+    jitter_seconds: jitterSeconds,
+    max_iterations: maxIterations ?? "unbounded"
+  });
 
   while (maxIterations === undefined || results.length < maxIterations) {
     const sleepWindowDelayMs = computeSleepWindowDelayMs(now(), sleepWindow);
     if (sleepWindowDelayMs > 0) {
+      reportProgress(input.onProgress, "online_operation.loop.sleep_window", { delay_seconds: Math.ceil(sleepWindowDelayMs / 1_000) });
       await sleep(sleepWindowDelayMs);
     }
 
@@ -218,7 +239,9 @@ export async function runOnlineOperationLoop(input: RunOnlineOperationLoopInput)
       break;
     }
 
-    await sleep(computeLoopDelayMs({ intervalSeconds, jitterSeconds, random }));
+    const loopDelayMs = computeLoopDelayMs({ intervalSeconds, jitterSeconds, random });
+    reportProgress(input.onProgress, "online_operation.loop.sleep", { delay_seconds: Math.ceil(loopDelayMs / 1_000) });
+    await sleep(loopDelayMs);
   }
 
   return {
@@ -243,6 +266,7 @@ export async function acquireAccountOperationLock(input: AcquireAccountOperation
   const lockDir = resolve(input.lockDir ?? "data/locks");
   const lockPath = resolve(lockDir, `operation.${accountKey}.lock`);
   const deadlineMs = now().getTime() + waitTimeoutSeconds * 1_000;
+  let waitingLogged = false;
 
   await mkdir(lockDir, { recursive: true });
 
@@ -288,6 +312,14 @@ export async function acquireAccountOperationLock(input: AcquireAccountOperation
       }
       if (now().getTime() >= deadlineMs) {
         throw onlineRunnerError("invalid_request", "operation lock is held for account: " + accountKey, { reason: "lock_timeout" });
+      }
+      if (!waitingLogged) {
+        reportProgress(input.onProgress, "online_operation.lock_wait.blocked", {
+          account: accountKey,
+          poll_interval_ms: pollIntervalMs,
+          wait_timeout_seconds: waitTimeoutSeconds
+        });
+        waitingLogged = true;
       }
       await sleep(pollIntervalMs);
     }
